@@ -1,0 +1,4 @@
+/target
+
+# machine-specific: redirects build artifacts off the exFAT volume
+/.cargo
