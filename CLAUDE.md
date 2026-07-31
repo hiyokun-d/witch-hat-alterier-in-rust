@@ -322,8 +322,8 @@ tracker artifact, not this file.
 
 ```
 M0  Foundation        ██████████ 7/7   ✅
-M1  Core primitives   ░░░░░░░░░░ 0/5   ← current
-M2  Window & pen      ░░░░░░░░░░ 0/5
+M1  Core primitives   ██████████ 5/5   ✅
+M2  Window & pen      ████░░░░░░ 2/5   ← current
 M3  Ink               ░░░░░░░░░░ 0/6
 M4  Recognizer        ░░░░░░░░░░ 0/8
 M5  Compiler ring     ░░░░░░░░░░ 0/8
@@ -334,7 +334,8 @@ M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
 ```
 
-**Current task:** M1.1 — `Point { x, y, stroke_id }` with `dist()`.
+**Current task:** M2.3 — mouse press/drag/release becomes a stroke of `Point`s,
+held in a `Resource` across frames.
 
 ---
 

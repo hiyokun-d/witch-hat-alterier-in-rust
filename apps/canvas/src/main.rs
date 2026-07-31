@@ -1,6 +1,9 @@
 use bevy::prelude::*;
 
-static DEBUG_ON_SCREEN: bool = false;
+/// Where the cursor readout goes: `true` draws it in the window, `false` logs
+/// it to the terminal. `const` rather than `static` so the dead branch is
+/// compiled out entirely.
+const DEBUG_ON_SCREEN: bool = true;
 
 // all of the code will be start here just like C
 fn main() {
@@ -17,20 +20,32 @@ fn main() {
 /// thing implicitly.
 #[derive(Component)]
 struct DebugReadout;
+
 fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
 
+    let font = TextFont {
+        font_size: FontSize::Px(18.0),
+        ..default()
+    };
+
+    if DEBUG_ON_SCREEN {
+        commands.spawn((
+            Text2d::new("cursor: —"),
+            font.clone(),
+            TextColor(Color::srgb(0.45, 0.85, 0.75)),
+            // Parked near the top of the window rather than dead center, where the
+            // drawing will be.
+            Transform::from_xyz(0.0, 300.0, 0.0),
+            DebugReadout,
+        ));
+    }
+
     commands.spawn((
-        Text2d::new("cursor: —"),
-        TextFont {
-            font_size: FontSize::Px(18.0),
-            ..default()
-        },
-        TextColor(Color::srgb(0.45, 0.85, 0.75)),
-        // Parked near the top of the window rather than dead center, where the
-        // drawing will be.
-        Transform::from_xyz(0.0, 300.0, 0.0),
-        DebugReadout,
+        Text2d::new("This app made by HIYO"),
+        font,
+        TextColor(Color::srgb(0.35, 0.35, 0.40)),
+        Transform::from_xyz(0.0, 270.0, 0.0),
     ));
 }
 
@@ -43,27 +58,34 @@ fn setup(mut commands: Commands) {
 fn cursor_world_position(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
-    mut readout: Single<&mut Text2d, With<DebugReadout>>,
+    readout: Option<Single<&mut Text2d, With<DebugReadout>>>,
 ) {
     let (camera, camera_transform) = *camera;
+    let message = describe_cursor(&window, camera, camera_transform);
 
+    // TODO: REMOVE ALL OF THIS ONCE INK RENDERING SHOWS THE SAME THING
+    // `Option` because a bare `Single` that matches nothing makes Bevy skip the
+    // whole system — which would take the terminal fallback down with it.
+    match readout {
+        Some(mut readout) => readout.0 = message,
+        None => info!("{message}"),
+    }
+}
+
+/// Builds the readout line, so the caller only has to decide where it goes.
+fn describe_cursor(window: &Window, camera: &Camera, camera_transform: &GlobalTransform) -> String {
     // Absent whenever the pointer is outside the window — normal, not an error.
     let Some(cursor) = window.cursor_position() else {
-        readout.0 = "cursor: off-window".to_string();
-        return;
+        return "cursor: off-window".to_string();
     };
 
     // Fails only on a degenerate viewport or projection.
-    let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor) else {
-        readout.0 = "cursor: conversion failed".to_string();
-        return;
+    let Ok(world) = camera.viewport_to_world_2d(camera_transform, cursor) else {
+        return "cursor: conversion failed".to_string();
     };
 
-    // TODO: REMOVE THIS CAUSE THIS IS JUST A DEBUG ON SCREEN
-    if DEBUG_ON_SCREEN {
-        readout.0 = format!(
-            "screen {:.0}, {:.0}   →   world {:.0}, {:.0}",
-            cursor.x, cursor.y, world_pos.x, world_pos.y
-        );
-    }
+    format!(
+        "screen {:.0}, {:.0}   →   world {:.0}, {:.0}",
+        cursor.x, cursor.y, world.x, world.y
+    )
 }
