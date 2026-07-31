@@ -5,6 +5,8 @@ members = ["apps/canvas", "crates/magic-core"]
 [profile.dev]
 opt-level = 1
 
+# Dependencies are optimized but stripped of debug info: we never step into
+# Bevy's internals, and their debuginfo was most of a 13 GB target directory.
 [profile.dev.package."*"]
 opt-level = 3
-debug = true
+debug = false
