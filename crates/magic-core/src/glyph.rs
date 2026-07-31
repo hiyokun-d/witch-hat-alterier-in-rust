@@ -121,15 +121,52 @@ impl Ring {
     }
 }
 
-pub struct GlyphID(pub u32);
+/// Identifies one glyph. A newtype rather than a bare `u32` so the compiler
+/// refuses to let a stroke id, a template id, or an array index stand in for
+/// one. Costs nothing at runtime — the wrapper is gone after compilation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GlyphId(pub u32);
 
+/// One complete spell drawing: a sigil, the signs around it, and the ring
+/// that encloses them.
+///
+/// Constructing a `Glyph` never fails and never validates. Whether it is a
+/// *legal* spell is the compiler's question (M5), and keeping the two apart is
+/// what makes either one testable.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Glyph {
-    id: GlyphID,
-    sigil: Option<Element>,
-    sign: Vec<Sign>,
-    ring: Ring,
-    parent: Option<GlyphID>,
-    linked: Vec<GlyphID>,
+    /// This glyph's identity, for parent and link references.
+    pub id: GlyphId,
+    /// The element at the center. `None` is legal: canon rule 8 lets
+    /// Repetition, Billowing, and Vision drive a spell with no element.
+    pub sigil: Option<Element>,
+    /// The keystones arranged around the sigil.
+    pub signs: Vec<Sign>,
+    /// The enclosing circle.
+    pub ring: Ring,
+    /// The glyph this one is nested inside, if any (canon rule 3).
+    pub parent: Option<GlyphId>,
+    /// Glyphs joined to this one by a drawn line (canon rule 4). Identical
+    /// linked glyphs amplify each other.
+    pub linked: Vec<GlyphId>,
+}
+
+impl Glyph {
+    /// A bare glyph: sigil and ring, nothing else.
+    ///
+    /// This is the shape a glyph has the moment its ring is recognized. Signs,
+    /// nesting, and links are filled in afterwards as the drawing continues,
+    /// so they start empty rather than being demanded up front.
+    pub fn new(id: GlyphId, sigil: Option<Element>, ring: Ring) -> Glyph {
+        Glyph {
+            id,
+            sigil,
+            ring,
+            signs: Vec::new(),
+            parent: None,
+            linked: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -208,5 +245,32 @@ mod tests {
         assert_eq!(r.radius(), 40.0);
         assert!(r.is_closed());
         assert_eq!(r.center().x, 0.0);
+    }
+
+    #[test]
+    fn new_glyph_starts_with_no_signs() {
+        let g = Glyph::new(GlyphId(0), Some(Element::Fire), ring(1.0));
+        assert!(g.signs.is_empty());
+    }
+
+    #[test]
+    fn new_glyph_starts_unnested_and_unlinked() {
+        let g = Glyph::new(GlyphId(0), Some(Element::Fire), ring(1.0));
+        assert_eq!(g.parent, None);
+        assert!(g.linked.is_empty());
+    }
+
+    /// Canon rule 8: Repetition, Billowing, and Vision drive a spell from the
+    /// center with no element at all.
+    #[test]
+    fn glyph_with_no_sigil_constructs() {
+        let g = Glyph::new(GlyphId(7), None, ring(1.0));
+        assert_eq!(g.sigil, None);
+    }
+
+    #[test]
+    fn glyph_ids_with_the_same_number_are_equal() {
+        assert_eq!(GlyphId(3), GlyphId(3));
+        assert_ne!(GlyphId(3), GlyphId(4));
     }
 }
