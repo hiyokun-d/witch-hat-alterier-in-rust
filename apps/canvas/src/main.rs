@@ -4,8 +4,6 @@ use magic_core::Point;
 mod debug;
 mod shortcuts;
 
-use shortcuts::{command_held, redo, undo};
-
 /// Closer than this and a sample is dropped. A motionless hand still fires
 /// `pressed` every frame, and hundreds of identical points would skew every
 /// average the recognizer takes later.
@@ -63,11 +61,7 @@ fn setup(mut commands: Commands) {
 /// Modifiers use `pressed`, the action key uses `just_pressed`: a modifier is a
 /// state you hold, the action is an edge. Asking `just_pressed` of both would
 /// demand they go down on the same frame — a 16ms window nobody hits.
-fn keyboard_shortcut(keys: Res<ButtonInput<KeyCode>>, mut pad: ResMut<InkPad>) {
-    for key in keys.get_just_pressed() {
-        println!("Just pressed physical key: {:?}", key);
-    }
-}
+fn keyboard_shortcut(keys: Res<ButtonInput<KeyCode>>, _pad: ResMut<InkPad>) {}
 
 /// Turns press, drag, and release into a stroke of [`Point`]s on [`InkPad`].
 pub fn capture_stroke(
