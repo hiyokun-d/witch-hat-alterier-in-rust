@@ -54,7 +54,7 @@ fn setup(mut commands: Commands) {
             ..default()
         },
         TextColor(Color::srgb(0.35, 0.35, 0.40)),
-        Transform::from_xyz(547.0, 332.0, 0.0),
+        Transform::from_xyz(540.0, -332.0, 0.0),
     ));
 }
 
@@ -64,18 +64,8 @@ fn setup(mut commands: Commands) {
 /// state you hold, the action is an edge. Asking `just_pressed` of both would
 /// demand they go down on the same frame — a 16ms window nobody hits.
 fn keyboard_shortcut(keys: Res<ButtonInput<KeyCode>>, mut pad: ResMut<InkPad>) {
-    if !command_held(&keys) {
-        return;
-    }
-
-    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-
-    // Redo first: ⇧⌘Z also satisfies the plain undo test, so checking undo
-    // first would swallow it.
-    if (shift && keys.just_pressed(KeyCode::KeyZ)) || keys.just_pressed(KeyCode::KeyY) {
-        redo(&mut pad);
-    } else if keys.just_pressed(KeyCode::KeyZ) {
-        undo(&mut pad);
+    for key in keys.get_just_pressed() {
+        println!("Just pressed physical key: {:?}", key);
     }
 }
 

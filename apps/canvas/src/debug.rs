@@ -7,8 +7,10 @@
 //!
 //! It goes away once ink rendering shows the same information implicitly.
 
+use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
+use bevy::window::WindowFocused;
 
 use crate::{InkPad, cursor_world};
 
@@ -20,13 +22,35 @@ const MARGIN: f32 = 14.0;
 /// Draws the live readouts. Add it, remove it, nothing else reacts.
 pub struct DebugOverlayPlugin;
 
+/// Raw event counts, so a dead shortcut can be blamed on the right layer.
+///
+/// `Window::focused` starts `true` and only changes when a focus event
+/// arrives, so a window that never got focus still reports `true`. Counting
+/// events instead removes the guesswork.
+#[derive(Resource, Default)]
+struct InputProbe {
+    key_events: u32,
+    last_key: String,
+    focus_events: u32,
+    focused_by_event: bool,
+}
+
 impl Plugin for DebugOverlayPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<InputProbe>()
+            .add_systems(Update, probe_input);
+
         app.add_systems(Startup, spawn_overlay).add_systems(
             Update,
             // After capture, so the numbers describe this frame rather than
             // trailing it by one.
-            (place_overlay, update_cursor_line, update_ink_line).after(crate::capture_stroke),
+            (
+                place_overlay,
+                update_cursor_line,
+                update_ink_line,
+                update_input_line,
+            )
+                .after(crate::capture_stroke),
         );
     }
 }
@@ -44,6 +68,10 @@ struct CursorLine;
 /// Marks the ink statistics block.
 #[derive(Component)]
 struct InkLine;
+
+/// Marks the keyboard/focus line — is the app even receiving key events?
+#[derive(Component)]
+struct InputLine;
 
 fn spawn_overlay(mut commands: Commands) {
     let font = TextFont {
@@ -67,12 +95,22 @@ fn spawn_overlay(mut commands: Commands) {
 
     commands.spawn((
         Text2d::new("ink: —"),
-        font,
+        font.clone(),
         TextColor(Color::srgb(0.85, 0.70, 0.45)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 0.0 },
         InkLine,
+    ));
+
+    commands.spawn((
+        Text2d::new("input: —"),
+        font,
+        TextColor(Color::srgb(0.70, 0.55, 0.90)),
+        TextLayout::justify(Justify::Left),
+        Anchor::BOTTOM_LEFT,
+        OverlayLine { lift: 4.0 },
+        InputLine,
     ));
 }
 
@@ -107,6 +145,54 @@ fn update_ink_line(
     mut line: Single<&mut Text2d, With<InkLine>>,
 ) {
     line.0 = ink_text(&pad, &mouse);
+}
+
+/// Taps the raw event streams before `ButtonInput` ever sees them.
+fn probe_input(
+    mut keyboard: MessageReader<KeyboardInput>,
+    mut focus: MessageReader<WindowFocused>,
+    mut probe: ResMut<InputProbe>,
+) {
+    for event in keyboard.read() {
+        probe.key_events += 1;
+        probe.last_key = format!("{:?}/{:?}", event.key_code, event.state);
+    }
+
+    for event in focus.read() {
+        probe.focus_events += 1;
+        probe.focused_by_event = event.focused;
+    }
+}
+
+/// Answers the only question that matters when a shortcut "does nothing":
+/// is this window focused, and are keys arriving at all?
+fn update_input_line(
+    window: Single<&Window>,
+    keys: Res<ButtonInput<KeyCode>>,
+    probe: Res<InputProbe>,
+    mut line: Single<&mut Text2d, With<InputLine>>,
+) {
+    let held: Vec<String> = keys.get_pressed().map(|key| format!("{key:?}")).collect();
+
+    // Two focus readings on purpose: the field, and what events actually said.
+    // They disagreeing is itself the answer.
+    let focus_by_event = if probe.focus_events == 0 {
+        "never".to_string()
+    } else {
+        format!("{}", probe.focused_by_event)
+    };
+
+    line.0 = format!(
+        "focus field {}  events {focus_by_event}   keyev {}  last {}\nheld [{}]",
+        window.focused,
+        probe.key_events,
+        if probe.last_key.is_empty() {
+            "—"
+        } else {
+            &probe.last_key
+        },
+        held.join(" "),
+    );
 }
 
 fn cursor_text(window: &Window, camera: &Camera, camera_transform: &GlobalTransform) -> String {

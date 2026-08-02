@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Without a bundle, macOS never gives the process a regular activation
+	     policy: no Dock icon, no menu bar, and keystrokes go to whatever app
+	     is actually frontmost. This file is the whole fix. -->
+	<key>CFBundleName</key>
+	<string>Canvas</string>
+	<key>CFBundleDisplayName</key>
+	<string>Magic Atelier</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.hiyo.atelier.canvas</string>
+	<key>CFBundleExecutable</key>
+	<string>canvas</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>11.0</string>
+	<!-- Retina. Without it the window renders at 1x and looks soft. -->
+	<key>NSHighResolutionCapable</key>
+	<true/>
+</dict>
+</plist>
