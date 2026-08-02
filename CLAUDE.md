@@ -338,8 +338,8 @@ tracker artifact, not this file.
 ```
 M0  Foundation        ██████████ 7/7   ✅
 M1  Core primitives   ██████████ 5/5   ✅
-M2  Window & pen      ████░░░░░░ 2/5   ← current
-M3  Ink               ░░░░░░░░░░ 0/6
+M2  Window & pen      ██████████ 5/5   ✅
+M3  Ink               ░░░░░░░░░░ 0/6   ← current
 M4  Recognizer        ░░░░░░░░░░ 0/8
 M5  Compiler ring     ░░░░░░░░░░ 0/8
 M6  Elements/physics  ░░░░░░░░░░ 0/8
@@ -349,8 +349,22 @@ M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
 ```
 
-**Current task:** M2.3 — mouse press/drag/release becomes a stroke of `Point`s,
-held in a `Resource` across frames.
+**Current task:** M3.1 — draw `InkPad.points` as lines with `Gizmos`, skipping
+the gap between strokes by comparing `stroke_id` on consecutive points.
+
+**Where M2 landed:**
+
+- `InkPad` resource — flat `Vec<Point>` plus `stroke_id`, and `undone` for
+  history. Flat because `$P` wants stroke membership on the point.
+- `capture_stroke` — press/drag/release, gated by `MIN_POINT_SPACING` so a
+  still hand doesn't bank sixty duplicate points a second.
+- `shortcuts.rs` — `undo`/`redo` as plain fns on `&mut InkPad`. `main.rs`
+  decides which keys mean what; that file decides what they do.
+- `debug.rs` — the overlay, see §0.
+- `./run.sh` — builds a real `.app`. Required for anything keyboard-related:
+  macOS gives unbundled binaries no activation policy, so an unbundled window
+  draws fine but never receives keystrokes. `cargo run --features dev` is
+  still the fast loop for mouse-only work.
 
 ---
 

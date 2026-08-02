@@ -116,7 +116,7 @@ fn spawn_overlay(mut commands: Commands) {
 
 /// Keeps the overlay in the bottom-left corner as the window resizes.
 ///
-/// Runs every frame rather than on a `Changed<Window>` filter — two entities,
+/// Runs every frame rather than on a `Changed<Window>` filter — three entities,
 /// and it removes any question of whether the first frame gets placed.
 fn place_overlay(window: Single<&Window>, mut lines: Query<(&OverlayLine, &mut Transform)>) {
     let corner = Vec2::new(window.width(), window.height()) * -0.5;

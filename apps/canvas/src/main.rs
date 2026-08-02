@@ -4,6 +4,8 @@ use magic_core::Point;
 mod debug;
 mod shortcuts;
 
+use shortcuts::{command_held, redo, undo};
+
 /// Closer than this and a sample is dropped. A motionless hand still fires
 /// `pressed` every frame, and hundreds of identical points would skew every
 /// average the recognizer takes later.
@@ -61,7 +63,33 @@ fn setup(mut commands: Commands) {
 /// Modifiers use `pressed`, the action key uses `just_pressed`: a modifier is a
 /// state you hold, the action is an edge. Asking `just_pressed` of both would
 /// demand they go down on the same frame — a 16ms window nobody hits.
-fn keyboard_shortcut(keys: Res<ButtonInput<KeyCode>>, _pad: ResMut<InkPad>) {}
+fn keyboard_shortcut(
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut pad: ResMut<InkPad>,
+) {
+    // Editing history while a stroke is still open corrupts it: undo would lift
+    // the in-progress stroke onto the stack, the drag would keep appending
+    // under the same freed id, and a later redo would splice the two together
+    // as one stroke with a jump in the middle.
+    if mouse.pressed(MouseButton::Left) {
+        return;
+    }
+
+    if !command_held(&keys) {
+        return;
+    }
+
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
+    // Redo first: ⇧⌘Z also satisfies the plain undo test, so checking undo
+    // first would swallow it.
+    if (shift && keys.just_pressed(KeyCode::KeyZ)) || keys.just_pressed(KeyCode::KeyY) {
+        redo(&mut pad);
+    } else if keys.just_pressed(KeyCode::KeyZ) {
+        undo(&mut pad);
+    }
+}
 
 /// Turns press, drag, and release into a stroke of [`Point`]s on [`InkPad`].
 pub fn capture_stroke(
@@ -76,15 +104,14 @@ pub fn capture_stroke(
     // just_pressed: is just for once or one time press but not hold
     // pressed: we can hold it down and still track where the cursor goes on the click while we drag
 
-    // No `just_pressed` arm: `pressed` is already true on the frame the button
-    // goes down, so the click position becomes the stroke's first point without
-    // a special case.
     // A fresh stroke is a new edit, and a new edit invalidates the redo stack —
     // otherwise redo would splice an old stroke in on top of newer work.
     if mouse.just_pressed(MouseButton::Left) {
         pad.undone.clear();
     }
 
+    // No first-point special case: `pressed` is already true on the frame the
+    // button goes down, so the click position lands here like any other sample.
     if mouse.pressed(MouseButton::Left) {
         // Off-window or a degenerate viewport. Skip the sample and leave the
         // stroke open — dragging back into the window resumes the same stroke.
