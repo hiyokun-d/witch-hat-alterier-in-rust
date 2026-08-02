@@ -2,3 +2,7 @@
 
 # machine-specific: redirects build artifacts off the exFAT volume
 /.cargo
+
+# macOS AppleDouble sidecars — exFAT has no resource forks
+._*
+.DS_Store

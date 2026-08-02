@@ -3,7 +3,7 @@ use bevy::prelude::*;
 /// Where the cursor readout goes: `true` draws it in the window, `false` logs
 /// it to the terminal. `const` rather than `static` so the dead branch is
 /// compiled out entirely.
-const DEBUG_ON_SCREEN: bool = true;
+const DEBUG_ON_SCREEN: bool = false;
 
 // all of the code will be start here just like C
 fn main() {
@@ -13,6 +13,20 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(Update, cursor_world_position)
         .run();
+}
+
+/// Spawns the debug overlay. Takes `&mut Commands` rather than owning it — this
+/// is a plain helper called from `setup`, not a system Bevy runs on its own.
+fn debugger_screen(commands: &mut Commands, font: TextFont) {
+    commands.spawn((
+        Text2d::new("cursor: —"),
+        font,
+        TextColor(Color::srgb(0.45, 0.85, 0.75)),
+        // Parked near the top of the window rather than dead center, where the
+        // drawing will be.
+        Transform::from_xyz(0.0, 300.0, 0.0),
+        DebugReadout,
+    ));
 }
 
 /// Marks the on-screen debug readout so the cursor system can find it again.
@@ -29,16 +43,9 @@ fn setup(mut commands: Commands) {
         ..default()
     };
 
+    //* INFO: every debug element should be generated from here and nothing else
     if DEBUG_ON_SCREEN {
-        commands.spawn((
-            Text2d::new("cursor: —"),
-            font.clone(),
-            TextColor(Color::srgb(0.45, 0.85, 0.75)),
-            // Parked near the top of the window rather than dead center, where the
-            // drawing will be.
-            Transform::from_xyz(0.0, 300.0, 0.0),
-            DebugReadout,
-        ));
+        debugger_screen(&mut commands, font.clone());
     }
 
     commands.spawn((
