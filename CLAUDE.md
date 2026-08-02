@@ -30,6 +30,18 @@ point is that he builds the thing, not that the thing exists.
 - Get ahead of the current milestone
 - Suggest a refactor that isn't blocking the current task
 
+**The one exception — `apps/canvas/src/debug.rs`:**
+
+That file is yours. Daffa does not write it, is not expected to read it, and
+should never be given a task inside it. When he needs to see something while
+drawing, add it to the overlay yourself and tell him what appears on screen —
+not how you built it.
+
+It stays quarantined: a single `DebugOverlayPlugin` added in one line, reading
+app state and never writing it. Deleting the file, the `mod debug;` line, and
+the `add_plugins` line must break nothing. If the overlay ever needs a change
+to real code to work, that change is wrong.
+
 **When he's stuck**, escalate in this order:
 
 1. Ask what he thinks is happening
@@ -287,6 +299,9 @@ atelier/
 │       └── tests/
 └── apps/
     └── canvas/           Bevy shell
+        └── src/
+            ├── main.rs   app, InkPad, stroke capture
+            └── debug.rs  on-screen overlay — Claude's, see §0
 ```
 
 ---
