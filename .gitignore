@@ -3,6 +3,15 @@
 # machine-specific: redirects build artifacts off the exFAT volume
 /.cargo
 
-# macOS AppleDouble sidecars — exFAT has no resource forks
+# macOS junk. AppleDouble sidecars exist because exFAT has no resource forks,
+# so the Finder writes metadata to a parallel `._name` file for every file.
 ._*
 .DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.apdisk

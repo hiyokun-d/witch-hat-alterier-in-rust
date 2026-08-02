@@ -3,7 +3,7 @@ use bevy::prelude::*;
 /// Where the cursor readout goes: `true` draws it in the window, `false` logs
 /// it to the terminal. `const` rather than `static` so the dead branch is
 /// compiled out entirely.
-const DEBUG_ON_SCREEN: bool = false;
+const DEBUG_ON_SCREEN: bool = true;
 
 // all of the code will be start here just like C
 fn main() {
@@ -70,13 +70,27 @@ fn cursor_world_position(
     let (camera, camera_transform) = *camera;
     let message = describe_cursor(&window, camera, camera_transform);
 
-    // TODO: REMOVE ALL OF THIS ONCE INK RENDERING SHOWS THE SAME THING
+    //  TODO: REMOVE ALL OF THIS ONCE INK RENDERING SHOWS THE SAME THING
     // `Option` because a bare `Single` that matches nothing makes Bevy skip the
     // whole system — which would take the terminal fallback down with it.
     match readout {
         Some(mut readout) => readout.0 = message,
         None => info!("{message}"),
     }
+}
+
+/// Where the cursor is in world space, or `None` when there is no answer.
+///
+/// Two ways to have no answer, and neither is an error worth distinguishing:
+/// the pointer is outside the window, or the viewport is degenerate. Callers
+/// that draw ink react to both the same way — by not drawing.
+fn cursor_world(
+    window: &Window,
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+) -> Option<Vec2> {
+    let cursor = window.cursor_position()?;
+    camera.viewport_to_world_2d(camera_transform, cursor).ok()
 }
 
 /// Builds the readout line, so the caller only has to decide where it goes.
@@ -86,11 +100,11 @@ fn describe_cursor(window: &Window, camera: &Camera, camera_transform: &GlobalTr
         return "cursor: off-window".to_string();
     };
 
-    // Fails only on a degenerate viewport or projection.
-    let Ok(world) = camera.viewport_to_world_2d(camera_transform, cursor) else {
+    let Some(world) = cursor_world(window, camera, camera_transform) else {
         return "cursor: conversion failed".to_string();
     };
 
+    // logging on the console to debugging
     format!(
         "screen {:.0}, {:.0}   →   world {:.0}, {:.0}",
         cursor.x, cursor.y, world.x, world.y
