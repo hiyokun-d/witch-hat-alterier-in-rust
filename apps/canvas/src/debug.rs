@@ -24,13 +24,13 @@ const MARGIN: f32 = 14.0;
 const TICK: f32 = 7.0;
 
 /// Guides: window edge, centre axes, the safe area inside the margins.
-const GUIDE: Color = Color::srgba(0.35, 0.30, 0.24, 0.30);
+const GUIDE: Color = Color::srgba(0.78, 0.72, 0.62, 0.28);
 /// Where a stroke begins.
 const START_MARK: Color = Color::srgb(0.10, 0.48, 0.34);
 /// Where a stroke ends.
 const END_MARK: Color = Color::srgb(0.66, 0.22, 0.18);
 /// The credit's anchor point — its true corner, read from its transform.
-const ANCHOR_MARK: Color = Color::srgb(0.55, 0.36, 0.10);
+const ANCHOR_MARK: Color = Color::srgb(0.90, 0.70, 0.30);
 
 /// Draws the live readouts. Add it, remove it, nothing else reacts.
 pub struct DebugOverlayPlugin;
@@ -222,10 +222,10 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("cursor: —"),
         font.clone(),
-        // Darkened for the parchment background: the overlay must stay legible
-        // without competing with ink, so each line keeps its hue but drops in
-        // value until it sits quieter than a stroke.
-        TextColor(Color::srgb(0.10, 0.42, 0.36)),
+        // Lightened for the desk: the readouts sit in the bottom-left, which
+        // is outside the paper disc at every window size. Each line keeps its
+        // own hue so a glance finds the right block without reading it.
+        TextColor(Color::srgb(0.45, 0.85, 0.75)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         // Two rows up: the ink block below it is two lines tall.
@@ -236,7 +236,7 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("ink: —"),
         font.clone(),
-        TextColor(Color::srgb(0.55, 0.36, 0.10)),
+        TextColor(Color::srgb(0.88, 0.72, 0.44)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 0.0 },
@@ -246,7 +246,7 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("input: —"),
         font.clone(),
-        TextColor(Color::srgb(0.38, 0.24, 0.55)),
+        TextColor(Color::srgb(0.72, 0.58, 0.92)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 4.0 },
@@ -256,7 +256,7 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("layout: —"),
         font.clone(),
-        TextColor(Color::srgb(0.20, 0.34, 0.52)),
+        TextColor(Color::srgb(0.52, 0.74, 0.94)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         // Above the input block, which is two rows tall starting at 4.
@@ -268,7 +268,7 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("frame: —"),
         font.clone(),
-        TextColor(Color::srgb(0.42, 0.42, 0.38)),
+        TextColor(Color::srgb(0.72, 0.70, 0.64)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 3.0 },
@@ -278,7 +278,7 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("strokes: —"),
         font,
-        TextColor(Color::srgb(0.50, 0.26, 0.32)),
+        TextColor(Color::srgb(0.92, 0.62, 0.64)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 8.0 },
@@ -411,6 +411,18 @@ fn draw_guides(
     if let Some(credit) = credit {
         cross(&mut gizmos, credit.translation.truncate(), ANCHOR_MARK);
     }
+
+    // The sheet's edge, traced over its own fill. The mesh is a unit circle
+    // scaled by its transform, so the drawn radius is the scale — reading it
+    // back proves the fit rather than assuming it.
+    if let Some(paper) = paper {
+        gizmos.circle_2d(
+            Isometry2d::from_translation(paper.translation.truncate()),
+            paper.scale.x,
+            GUIDE,
+        );
+        cross(&mut gizmos, paper.translation.truncate(), GUIDE);
+    }
 }
 
 /// Marks the first and last point of every stroke.
@@ -444,6 +456,7 @@ fn cross(gizmos: &mut Gizmos<DebugGizmos>, at: Vec2, color: Color) {
 fn update_layout_line(
     window: Single<&Window>,
     credit: Option<Single<&Transform, With<Credit>>>,
+    paper: Option<Single<&Transform, With<Paper>>>,
     mut line: Single<&mut Text2d, With<LayoutLine>>,
 ) {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
@@ -460,8 +473,18 @@ fn update_layout_line(
         None => "—".to_string(),
     };
 
+    // Scale *is* the radius: the mesh is a unit circle. Also reported is how
+    // much desk is left, which should hold at PAPER_MARGIN on the short axis.
+    let paper_at = match paper {
+        Some(paper) => {
+            let radius = paper.scale.x;
+            format!("r {radius:.0}  desk {:.0}", half.x.min(half.y) - radius)
+        }
+        None => "—".to_string(),
+    };
+
     line.0 = format!(
-        "window {:.0}×{:.0}   half ±{:.0}, ±{:.0}   dpi ×{:.2}   {}\ncredit {credit_at}   margins overlay {MARGIN:.0} credit {:.0}",
+        "window {:.0}×{:.0}   half ±{:.0}, ±{:.0}   dpi ×{:.2}   {}\ncredit {credit_at}   paper {paper_at}   margins {MARGIN:.0}/{:.0}",
         window.width(),
         window.height(),
         half.x,
