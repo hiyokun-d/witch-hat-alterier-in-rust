@@ -486,8 +486,9 @@ atelier/
 └── apps/
     └── canvas/           Bevy shell
         └── src/
-            ├── main.rs   app, InkPad, stroke capture
-            └── debug.rs  on-screen overlay — Claude's, see §0
+            ├── main.rs      app, InkPad, capture, paper, ink
+            ├── shortcuts.rs undo / redo / clear on &mut InkPad
+            └── debug.rs     on-screen overlay — Claude's, see §0
 ```
 
 ---
@@ -524,9 +525,10 @@ tracker artifact, not this file.
 ```
 M0  Foundation        ██████████ 7/7   ✅
 M1  Core primitives   ██████████ 5/5   ✅
+M1R Canon rework      ██████████ 7/7   ✅
 M2  Window & pen      ██████████ 5/5   ✅
-M3  Ink               ░░░░░░░░░░ 0/6   ← current
-M4  Recognizer        ░░░░░░░░░░ 0/8
+M3  Ink               ██████████ 7/7   ✅
+M4  Recognizer        ░░░░░░░░░░ 0/8   ← current
 M5  Compiler ring     ░░░░░░░░░░ 0/8
 M6  Elements/physics  ░░░░░░░░░░ 0/8
 M7  Reactions         ░░░░░░░░░░ 0/8
@@ -535,18 +537,48 @@ M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
 ```
 
-**Current task:** M3.1 — draw `InkPad.points` as lines with `Gizmos`, skipping
-the gap between strokes by comparing `stroke_id` on consecutive points.
+**Current task:** M4.1 — `circle.rs`: fit a circle to one stroke and report the
+fit error, so a ring can be told from a scribble.
 
-**Where M2 landed:**
+**Where M1R landed** — the canon rework, after the telepedia research:
+
+- `catalog.rs` — the `.ron` loader. Every sigil, sign, and spell is data now;
+  nothing about behaviour is a `match` arm. Schema in code (`Family`, `Tier`,
+  `Confidence`, `Class`, `Slot`, `Scope`, `RegionPattern`), content in
+  `the-magic-assets/`.
+- `SigilId` / `SignId` — newtypes over `String`. The old `Sigil` and `SignKind`
+  enums are gone; an enum of sigils breaks §4.4 the day someone adds one.
+- `arrangement.rs` — `Symmetry::classify` (radial by spacing *and* kind period,
+  bilateral by mirror axis) and `RegionArrangement::classify`, which returns the
+  same `RegionPattern` the spell fixtures record so the two can be compared.
+- `Sign.placement` — the angle a sign sits at. Inward and outward are questions
+  about direction relative to position, so they are unanswerable without it.
+- `Ring::contains(point, tolerance)` — rule 1's *connecting to* clause.
+- Core gained `ron` and `serde`. §5's "zero dependencies" is spent; §4.4 and
+  data-driven behaviour both required a parser.
+
+**Where M2 and M3 landed:**
 
 - `InkPad` resource — flat `Vec<Point>` plus `stroke_id`, and `undone` for
   history. Flat because `$P` wants stroke membership on the point.
 - `capture_stroke` — press/drag/release, gated by `MIN_POINT_SPACING` so a
-  still hand doesn't bank sixty duplicate points a second.
-- `shortcuts.rs` — `undo`/`redo` as plain fns on `&mut InkPad`. `main.rs`
-  decides which keys mean what; that file decides what they do.
-- `debug.rs` — the overlay, see §0.
+  still hand doesn't bank sixty duplicate points a second, and by
+  `PaperShape::accepts` so ink stays on the sheet.
+- `draw_ink` — gizmo polyline, breaking between strokes on `stroke_id`. Width
+  is `INK_WIDTH` on the gizmo config, not per call, with round joints so thick
+  turns have no notch.
+- `shortcuts.rs` — `undo` / `redo` / `clear` / `clear_all` as plain fns on
+  `&mut InkPad`, plus `TapCounter`. `main.rs` decides which keys mean what;
+  that file decides what they do. ⌘⌫ clears recoverably — the pad goes onto
+  `undone` as one entry — and ⇧⌘⌫ wipes everything including the history.
+- `PaperShape` — `Full` by default, `Disc` behind **three bare `F` presses
+  inside two seconds** (`TapCounter`), because the swap wipes the pad. `extent`
+  and `accepts` are the single source of truth for where the sheet's edge is,
+  used by both the mesh fit and the pen.
+- Palette — `PAPER` parchment on a `DESK` surface, `INK` iron-gall black.
+  `place_credit` and `fit_paper` track the window every frame.
+- `debug.rs` — the overlay, see §0. Six readouts, layout guides, stroke
+  endpoints, F1 to hide.
 - `./run.sh` — builds a real `.app`. Required for anything keyboard-related:
   macOS gives unbundled binaries no activation policy, so an unbundled window
   draws fine but never receives keystrokes. `cargo run --features dev` is

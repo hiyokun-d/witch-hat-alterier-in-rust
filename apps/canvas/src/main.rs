@@ -6,7 +6,7 @@ use magic_core::Point;
 mod debug;
 mod shortcuts;
 
-use shortcuts::{clear, command_held, redo, undo};
+use shortcuts::{TapCounter, clear, clear_all, command_held, redo, undo};
 
 /// Closer than this and a sample is dropped. A motionless hand still fires
 /// `pressed` every frame, and hundreds of identical points would skew every
@@ -73,12 +73,88 @@ pub struct InkPad {
 #[derive(Component)]
 pub struct Credit;
 
-/// Marks the round sheet of parchment so [`fit_paper`] can resize it.
+/// Marks the sheet of parchment so [`fit_paper`] can resize it.
 ///
 /// Public so the debug overlay can read where the sheet is without the sheet
 /// having to know the overlay exists.
 #[derive(Component)]
 pub struct Paper;
+
+/// Which sheet is on the desk. Toggled with `F`.
+///
+/// This is not decoration: the sheet's edge is the boundary the pen honours, so
+/// the shape decides where a stroke is allowed to exist.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PaperShape {
+    /// Parchment wall to wall. Anywhere in the window takes ink.
+    ///
+    /// The default, so nothing about the pen surprises anyone who just opened
+    /// the app — [`PaperShape::Disc`] is there to be found.
+    #[default]
+    Full,
+    /// A round sheet lying on the desk. The pen stops at its edge.
+    Disc,
+}
+
+impl PaperShape {
+    /// The other one. A named method rather than an inline `match` at the call
+    /// site, so adding a third sheet later is one edit here.
+    fn toggled(self) -> PaperShape {
+        match self {
+            PaperShape::Disc => PaperShape::Full,
+            PaperShape::Full => PaperShape::Disc,
+        }
+    }
+
+    /// Half-extents of the sheet in world units: the disc's radius in both
+    /// axes, or half the window for full-bleed.
+    ///
+    /// One function so [`fit_paper`] and [`PaperShape::accepts`] can never
+    /// disagree about where the edge is — a sheet you can draw off the side of
+    /// would be exactly that disagreement.
+    pub fn extent(self, window: &Window) -> Vec2 {
+        let half = Vec2::new(window.width(), window.height()) * 0.5;
+
+        match self {
+            // Driven by the shorter axis, which is what keeps it a full circle
+            // rather than letting a wide window push its top and bottom off
+            // screen. A window narrower than twice the margin would ask for a
+            // negative radius and turn the mesh inside out, hence the floor.
+            PaperShape::Disc => Vec2::splat((half.min_element() - PAPER_MARGIN).max(1.0)),
+            PaperShape::Full => half,
+        }
+    }
+
+    /// Whether the sheet takes ink at `point`, in world space.
+    pub fn accepts(self, window: &Window, point: Vec2) -> bool {
+        let extent = self.extent(window);
+
+        match self {
+            PaperShape::Disc => point.length() <= extent.x,
+            PaperShape::Full => point.abs().cmple(extent).all(),
+        }
+    }
+}
+
+/// The two sheets, built once at startup.
+///
+/// Meshes are vertex buffers on the GPU. Toggling swaps a handle; it does not
+/// build geometry, and neither does resizing — that is a scale on the transform.
+#[derive(Resource)]
+struct PaperMeshes {
+    disc: Handle<Mesh>,
+    full: Handle<Mesh>,
+}
+
+impl PaperMeshes {
+    /// The mesh for a given sheet.
+    fn of(&self, shape: PaperShape) -> Handle<Mesh> {
+        match shape {
+            PaperShape::Disc => self.disc.clone(),
+            PaperShape::Full => self.full.clone(),
+        }
+    }
+}
 
 // all of the code will be start here just like C
 fn main() {
@@ -94,6 +170,8 @@ fn main() {
         .add_plugins(debug::DebugOverlayPlugin)
         .insert_resource(ClearColor(DESK))
         .init_resource::<InkPad>()
+        .init_resource::<PaperShape>()
+        .init_resource::<TapCounter>()
         .add_systems(Startup, setup)
         // Shortcuts run after capture so an undo pressed mid-drag wins the
         // frame, rather than leaving behind the point captured a moment
@@ -105,6 +183,9 @@ fn main() {
                 keyboard_shortcut,
                 draw_ink,
                 place_credit,
+                // After `keyboard_shortcut`, so a sheet swapped this frame is
+                // rescaled in the same frame rather than flashing at the old
+                // size.
                 fit_paper,
             )
                 .chain(),
@@ -120,15 +201,23 @@ fn setup(
 ) {
     commands.spawn(Camera2d);
 
-    // A unit circle, scaled by `fit_paper` rather than rebuilt. Mesh assets are
-    // vertex buffers uploaded to the GPU; regenerating one every frame to change
-    // its size would be the expensive way to do a multiply.
+    // Both sheets are unit-sized and scaled by `fit_paper` rather than rebuilt.
+    // A `Rectangle` of 1×1 scales to any window; a `Circle` of radius 1 scales
+    // to any radius. Regenerating either every frame would be the expensive way
+    // to do a multiply.
+    let paper_meshes = PaperMeshes {
+        disc: meshes.add(Circle::new(1.0)),
+        full: meshes.add(Rectangle::new(1.0, 1.0)),
+    };
+
     commands.spawn((
-        Mesh2d(meshes.add(Circle::new(1.0))),
+        Mesh2d(paper_meshes.of(PaperShape::default())),
         MeshMaterial2d(materials.add(PAPER)),
         Transform::from_xyz(0.0, 0.0, PAPER_Z),
         Paper,
     ));
+
+    commands.insert_resource(paper_meshes);
 
     // Gizmo lines default to 2px, which reads as a pencil sketch. Seals in the
     // source are inked with a broad nib — heavy enough that the ring and the
@@ -162,15 +251,28 @@ fn setup(
 /// Modifiers use `pressed`, the action key uses `just_pressed`: a modifier is a
 /// state you hold, the action is an edge. Asking `just_pressed` of both would
 /// demand they go down on the same frame — a 16ms window nobody hits.
+#[allow(clippy::too_many_arguments)]
 fn keyboard_shortcut(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    time: Res<Time>,
+    meshes: Res<PaperMeshes>,
+    mut taps: ResMut<TapCounter>,
+    mut shape: ResMut<PaperShape>,
+    mut paper: Single<&mut Mesh2d, With<Paper>>,
     mut pad: ResMut<InkPad>,
 ) {
+    let now = time.elapsed_secs();
+    // Ages an open tap run even on frames where nothing is pressed, so the
+    // readout shows it lapse rather than staying lit until the next press.
+    taps.expire(now);
+
     // Editing history while a stroke is still open corrupts it: undo would lift
     // the in-progress stroke onto the stack, the drag would keep appending
     // under the same freed id, and a later redo would splice the two together
-    // as one stroke with a jump in the middle.
+    // as one stroke with a jump in the middle. Swapping sheets mid-stroke has
+    // the same problem from the other side — it moves the boundary under a pen
+    // already committed to a line.
     if mouse.pressed(MouseButton::Left) {
         return;
     }
@@ -180,19 +282,36 @@ fn keyboard_shortcut(
         println!("Changing brushes or something i don't know")
     }
 
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+
     // using ctrl for the shortcuts
     if command_held(&keys) {
-        let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-
         // Redo first: ⇧⌘Z also satisfies the plain undo test, so checking undo
         // first would swallow it.
         if (shift && keys.just_pressed(KeyCode::KeyZ)) || keys.just_pressed(KeyCode::KeyY) {
             redo(&mut pad);
         } else if keys.just_pressed(KeyCode::KeyZ) {
             undo(&mut pad);
-        } else if shift && keys.just_pressed(KeyCode::Backspace) {
+        } else if keys.just_pressed(KeyCode::Backspace) {
             clear(&mut pad);
         }
+
+        // A modifier is held, so nothing below should also fire. ⌘F stays free.
+        return;
+    }
+
+    // Three bare F presses inside the counter's window swap the sheet. A single
+    // press would be far too easy to hit while reaching for anything else, and
+    // the swap wipes the pad.
+    if keys.just_pressed(KeyCode::KeyF) && taps.tap(now) {
+        // Ink outside the new sheet would be stranded — unreachable by the pen
+        // and uneditable — so the swap starts from a blank pad rather than
+        // leaving strokes the boundary no longer admits.
+        clear_all(&mut pad);
+        *shape = shape.toggled();
+        // Only the handle changes. The transform is left alone; `fit_paper`
+        // runs later this frame and rescales it for the new shape.
+        paper.0 = meshes.of(*shape);
     }
 }
 
@@ -201,6 +320,7 @@ pub fn capture_stroke(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
+    shape: Res<PaperShape>,
     mut pad: ResMut<InkPad>,
 ) {
     let (camera, camera_transform) = *camera;
@@ -234,7 +354,11 @@ pub fn capture_stroke(
                 last.stroke_id == stroke_id && last.dist(&point) < MIN_POINT_SPACING
             });
 
-            if !too_close {
+            // The sheet's edge is where ink can exist, so a sample off the paper
+            // is dropped exactly as a sample off the window is. The stroke stays
+            // open: drag back onto the sheet and it carries on, the way a nib
+            // lifted over the edge and set down again would.
+            if !too_close && shape.accepts(&window, world) {
                 pad.points.push(point);
             }
         }
@@ -280,20 +404,28 @@ pub fn draw_ink(mut gizmos: Gizmos, pad: Res<InkPad>) {
     }
 }
 
-/// Sizes the parchment disc to the window, leaving [`PAPER_MARGIN`] of desk.
+/// Sizes the sheet to the window.
 ///
-/// The sheet is a unit circle, so fitting it is a scale, not a new mesh. Driven
-/// by the *shorter* window axis, which is what keeps it a full circle instead of
-/// letting a wide window push its top and bottom off screen.
-fn fit_paper(window: Single<&Window>, mut paper: Single<&mut Transform, With<Paper>>) {
-    let shorter = window.width().min(window.height());
+/// Both meshes are unit-sized, so fitting is a scale, never a new mesh. The
+/// numbers come from [`PaperShape::extent`], the same function the pen consults
+/// — one source of truth for where the edge is.
+fn fit_paper(
+    window: Single<&Window>,
+    shape: Res<PaperShape>,
+    mut paper: Single<&mut Transform, With<Paper>>,
+) {
+    let extent = shape.extent(&window);
 
-    // A window dragged smaller than twice the margin would ask for a negative
-    // radius, which flips the mesh inside out. One pixel of paper is the floor.
-    let radius = (shorter * 0.5 - PAPER_MARGIN).max(1.0);
+    // The disc mesh has radius 1 and the rectangle is 1×1, so a disc scales by
+    // its radius and a full sheet by its full size. Doubling here rather than in
+    // `extent` keeps that function talking in half-extents throughout.
+    let scale = match *shape {
+        PaperShape::Disc => extent,
+        PaperShape::Full => extent * 2.0,
+    };
 
-    // Uniform scale on x and y only: z stays 1.0 so `PAPER_Z` keeps its meaning.
-    paper.scale = Vec3::new(radius, radius, 1.0);
+    // z stays 1.0 so `PAPER_Z` keeps its meaning.
+    paper.scale = Vec3::new(scale.x, scale.y, 1.0);
 }
 
 /// Keeps the signature in the bottom-right corner as the window resizes.
@@ -310,4 +442,78 @@ fn place_credit(window: Single<&Window>, mut credit: Single<&mut Transform, With
     // Pulled back in along both axes: x toward the centre, y up off the edge.
     credit.translation.x = corner.x - CREDIT_MARGIN;
     credit.translation.y = corner.y + CREDIT_MARGIN;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bevy's default window: 1280×720, so half-extents are 640×360 and the
+    /// disc's radius is 360 − `PAPER_MARGIN`.
+    fn window() -> Window {
+        Window::default()
+    }
+
+    fn disc_radius() -> f32 {
+        360.0 - PAPER_MARGIN
+    }
+
+    #[test]
+    fn disc_radius_follows_the_shorter_axis() {
+        let extent = PaperShape::Disc.extent(&window());
+        assert_eq!(extent, Vec2::splat(disc_radius()));
+    }
+
+    #[test]
+    fn full_sheet_covers_the_whole_window() {
+        assert_eq!(PaperShape::Full.extent(&window()), Vec2::new(640.0, 360.0));
+    }
+
+    #[test]
+    fn disc_takes_ink_at_its_centre() {
+        assert!(PaperShape::Disc.accepts(&window(), Vec2::ZERO));
+    }
+
+    #[test]
+    fn disc_refuses_ink_past_its_edge() {
+        let just_out = Vec2::new(disc_radius() + 1.0, 0.0);
+        assert!(!PaperShape::Disc.accepts(&window(), just_out));
+    }
+
+    /// The corner of the window is inside the *window* but outside the *disc*.
+    /// This is the case the whole feature exists for.
+    #[test]
+    fn disc_refuses_ink_in_the_window_corners() {
+        let corner = Vec2::new(600.0, 340.0);
+        assert!(!PaperShape::Disc.accepts(&window(), corner));
+        assert!(PaperShape::Full.accepts(&window(), corner));
+    }
+
+    #[test]
+    fn disc_edge_itself_still_takes_ink() {
+        let on_edge = Vec2::new(0.0, disc_radius());
+        assert!(PaperShape::Disc.accepts(&window(), on_edge));
+    }
+
+    #[test]
+    fn full_sheet_refuses_ink_outside_the_window() {
+        assert!(!PaperShape::Full.accepts(&window(), Vec2::new(641.0, 0.0)));
+        assert!(!PaperShape::Full.accepts(&window(), Vec2::new(0.0, -361.0)));
+    }
+
+    #[test]
+    fn toggling_twice_returns_the_same_sheet() {
+        let start = PaperShape::default();
+        assert_eq!(start.toggled().toggled(), start);
+        assert_ne!(start.toggled(), start);
+    }
+
+    /// A window narrower than twice the margin would ask for a negative radius
+    /// and turn the mesh inside out.
+    #[test]
+    fn a_tiny_window_still_leaves_a_pixel_of_paper() {
+        let mut tiny = Window::default();
+        tiny.resolution.set(10.0, 10.0);
+        assert!(PaperShape::Disc.extent(&tiny).x >= 1.0);
+    }
 }

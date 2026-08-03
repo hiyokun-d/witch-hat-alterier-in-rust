@@ -13,7 +13,8 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::window::WindowFocused;
 
-use crate::{Credit, InkPad, Paper, cursor_world};
+use crate::shortcuts::TapCounter;
+use crate::{Credit, InkPad, Paper, PaperShape, cursor_world};
 
 /// Height of one text row, at the font size below.
 const LINE_GAP: f32 = 22.0;
@@ -343,6 +344,8 @@ fn update_input_line(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     probe: Res<InputProbe>,
+    taps: Res<TapCounter>,
+    time: Res<Time>,
     mut line: Single<&mut Text2d, With<InputLine>>,
 ) {
     let held: Vec<String> = keys.get_pressed().map(|key| format!("{key:?}")).collect();
@@ -359,8 +362,15 @@ fn update_input_line(
         format!("{}", probe.focused_by_event)
     };
 
+    // A tap run in progress, so a swap that did not fire can be told apart from
+    // one that was never started.
+    let tap_run = match taps.remaining(time.elapsed_secs()) {
+        Some(left) => format!("F {}/{} {left:.1}s", taps.count(), taps.needed()),
+        None => format!("F ×{} swaps paper", taps.needed()),
+    };
+
     line.0 = format!(
-        "focus field {}  events {focus_by_event}   keyev {}  last {}\nheld [{}]  mouse [{}]  F1 hides this",
+        "focus field {}  events {focus_by_event}   keyev {}  last {}\nheld [{}]  mouse [{}]  F1 hides this  {tap_run}",
         window.focused,
         probe.key_events,
         if probe.last_key.is_empty() {
@@ -382,6 +392,7 @@ fn draw_guides(
     window: Single<&Window>,
     credit: Option<Single<&Transform, With<Credit>>>,
     paper: Option<Single<&Transform, With<Paper>>>,
+    shape: Res<PaperShape>,
     mut gizmos: Gizmos<DebugGizmos>,
 ) {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
@@ -412,16 +423,26 @@ fn draw_guides(
         cross(&mut gizmos, credit.translation.truncate(), ANCHOR_MARK);
     }
 
-    // The sheet's edge, traced over its own fill. The mesh is a unit circle
-    // scaled by its transform, so the drawn radius is the scale — reading it
-    // back proves the fit rather than assuming it.
+    // The sheet's edge, traced over its own fill. Read back from the transform
+    // rather than recomputed, so a fit that disagrees with the pen's boundary
+    // shows as a visible mismatch instead of quietly agreeing with the bug.
     if let Some(paper) = paper {
-        gizmos.circle_2d(
-            Isometry2d::from_translation(paper.translation.truncate()),
-            paper.scale.x,
-            GUIDE,
-        );
-        cross(&mut gizmos, paper.translation.truncate(), GUIDE);
+        let at = paper.translation.truncate();
+
+        match *shape {
+            PaperShape::Disc => {
+                gizmos.circle_2d(Isometry2d::from_translation(at), paper.scale.x, GUIDE);
+            }
+            PaperShape::Full => {
+                gizmos.rect_2d(
+                    Isometry2d::from_translation(at),
+                    paper.scale.truncate(),
+                    GUIDE,
+                );
+            }
+        }
+
+        cross(&mut gizmos, at, GUIDE);
     }
 }
 
@@ -457,6 +478,7 @@ fn update_layout_line(
     window: Single<&Window>,
     credit: Option<Single<&Transform, With<Credit>>>,
     paper: Option<Single<&Transform, With<Paper>>>,
+    shape: Res<PaperShape>,
     mut line: Single<&mut Text2d, With<LayoutLine>>,
 ) {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
@@ -476,10 +498,19 @@ fn update_layout_line(
     // Scale *is* the radius: the mesh is a unit circle. Also reported is how
     // much desk is left, which should hold at PAPER_MARGIN on the short axis.
     let paper_at = match paper {
-        Some(paper) => {
-            let radius = paper.scale.x;
-            format!("r {radius:.0}  desk {:.0}", half.x.min(half.y) - radius)
-        }
+        // The disc mesh has radius 1 and the rectangle is 1×1, so scale reads as
+        // radius for one and full size for the other. Printed with the units it
+        // actually has rather than a single number that means two things.
+        Some(paper) => match *shape {
+            PaperShape::Disc => format!(
+                "DISC r {:.0}  desk {:.0}",
+                paper.scale.x,
+                half.min_element() - paper.scale.x
+            ),
+            PaperShape::Full => {
+                format!("FULL {:.0}×{:.0}", paper.scale.x, paper.scale.y)
+            }
+        },
         None => "—".to_string(),
     };
 
