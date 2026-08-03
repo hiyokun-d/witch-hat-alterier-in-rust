@@ -6,7 +6,7 @@ use magic_core::Point;
 mod debug;
 mod shortcuts;
 
-use shortcuts::{TapCounter, clear, clear_all, command_held, redo, undo};
+use shortcuts::{clear, clear_all, command_held, redo, undo, TapCounter};
 
 /// Closer than this and a sample is dropped. A motionless hand still fires
 /// `pressed` every frame, and hundreds of identical points would skew every
