@@ -1,3 +1,4 @@
+use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore, GizmoLineJoint};
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use magic_core::Point;
@@ -23,6 +24,10 @@ const WINDOW_HALF: Vec2 = Vec2::new(640.0, 360.0);
 
 /// Gap between the credit and the window edge.
 const CREDIT_MARGIN: f32 = 16.0;
+
+/// Stroke weight in pixels. Seals in the source run roughly 2–3% of the glyph's
+/// diameter, so a palm-sized seal on a 1280px window lands near here.
+const INK_WIDTH: f32 = 5.0;
 
 /// Aged parchment. Witches in the source draw dark on warm paper, never on
 /// white — the cream is what keeps ink from reading as harsh.
@@ -69,8 +74,18 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, mut gizmo_config: ResMut<GizmoConfigStore>) {
     commands.spawn(Camera2d);
+
+    // Gizmo lines default to 2px, which reads as a pencil sketch. Seals in the
+    // source are inked with a broad nib — heavy enough that the ring and the
+    // signs carry equal weight at a glance.
+    let (config, _) = gizmo_config.config_mut::<DefaultGizmoConfigGroup>();
+    config.line.width = INK_WIDTH;
+    // A thick polyline is drawn as separate quads, so every direction change
+    // leaves a notch on the outside of the turn. Round joints fill them, which
+    // is also what a real nib does.
+    config.line.joints = GizmoLineJoint::Round(8);
 
     commands.spawn((
         Text2d::new("This app made by HIYO"),

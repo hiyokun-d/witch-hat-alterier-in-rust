@@ -1,0 +1,308 @@
+// Signs (keystones) — the "how" of a spell. Japanese suffix: 矢 (ya), "arrow".
+//
+// The naming is a gift: sigils are 紋 (mon, a crest) and signs are 矢 (ya, an
+// arrow). Sigils are things; signs are vectors. Our type system should
+// reflect that — every sign carries an orientation, most sigils don't.
+//
+// The wiki reports 44 signs deciphered so far, and groups them into four
+// classes. Those class names are the wiki's own analysis, NOT stated in the
+// manga — but they are mechanically useful, so we keep them and mark them.
+//
+// class:
+//   Directional      bilateral symmetry, no radial symmetry — orientation
+//                    fully determines behaviour
+//   SemiDirectional  orientation matters but less strictly
+//   NonDirectional   orientation irrelevant
+//   Asymmetric       neither symmetry; unusual behaviour
+//
+// tier:
+//   Official     named in the source material
+//   Unofficial   fan-reconstructed name, effect inferred by spell comparison
+//   Decorative   no mechanical effect
+
+(
+  signs: [
+    // ---- OFFICIAL -------------------------------------------------------
+    (
+      id: "column",
+      jp: "柱の矢",
+      romaji: "hashira no ya",
+      tier: Official,
+      class: Directional,
+      note: "Magic manifests as a column or beam above the seal. If signs are
+             unbalanced the spell manifests toward the side with the most OR
+             THE LARGEST signs — size counts, not just count. Longer line
+             typically faces inward.",
+      confidence: Canon,
+      seen_in: ["watershot_seal"],
+    ),
+    (
+      id: "dispersion",
+      tier: Official,
+      class: Directional,
+      note: "A column that leaks in every direction instead of beaming. Same
+             family of behaviour as column, different distribution.",
+      confidence: Canon,
+    ),
+    (
+      id: "levitation",
+      tier: Official,
+      class: Directional,
+      note: "Magic floats above the seal, or moves the object the seal is
+             drawn on. Movement follows where the signs point. Arrow side
+             typically faces inward.",
+      confidence: Canon,
+      seen_in: ["pyreball_seal", "rising_platform_of_water", "sylph_shoes_seal",
+                "glowstone_path", "pegasus_carriage"],
+    ),
+    (
+      id: "pulling",
+      jp: "引き寄せの矢",
+      romaji: "hikiyose no ya",
+      tier: Official,
+      class: Directional,
+      // ENGINE NOTE: this is the most precisely specified sign in canon and
+      // it gives us a continuous parameter, not a binary. Angle determines
+      // the pull/twist mix:
+      //   arrow inward, 0°   -> pure pull
+      //   arrow inward, angled -> pull + twist
+      //   rotated 90°        -> pure twist, no pull
+      //   inverted           -> likely push
+      // Implement as: pull_strength = cos(angle), twist_strength = sin(angle)
+      angle_semantics: PullTwistMix,
+      note: "Pulls matter matching the seal's sigil toward the seal.",
+      confidence: Canon,
+      seen_in: ["flame_burst", "water_cage", "wall_bend", "grasping_wind"],
+    ),
+    (
+      id: "crushing",
+      jp: "破砕の矢",
+      romaji: "hasai no ya",
+      tier: Official,
+      class: SemiDirectional,
+      reversible: true,
+      note: "Breaks things apart; reversed, reassembles them. Only ever seen
+             paired with earth, so other pairings are undefined.",
+      confidence: Canon,
+      seen_in: ["wall_breaker_seal", "integration"],
+    ),
+    (
+      id: "float",
+      tier: Official,
+      class: NonDirectional,
+      note: "Makes the object it is drawn on float regardless of gravity.
+             Partly retconned into levitation; surviving uses are float-only.",
+      confidence: Canon,
+      seen_in: ["floating_expansion", "dancing_lights"],
+    ),
+    (
+      id: "region",
+      tier: Official,
+      class: Directional,
+      // ENGINE NOTE: region is evaluated COLLECTIVELY across all region signs
+      // in the seal, not per-sign. Four canon arrangements:
+      arrangements: [
+        (pattern: AllSameSide,  effect: "magic shoots that direction"),
+        (pattern: AllInward,    effect: "manifests only inside the ring"),
+        (pattern: AllOutward,   effect: "manifests only outside the ring, no
+                                         effect within the seal"),
+        (pattern: Opposed,      effect: "manifests only ON the ring itself"),
+      ],
+      note: "Determines WHERE magic manifests relative to the seal. Formerly
+             called 'direction' on the older wiki — region is the current
+             name.",
+      confidence: Canon,
+      seen_in: ["water_bolt", "floating_drops", "twinned_bottles"],
+    ),
+    (
+      id: "convergence",
+      tier: Official,
+      class: SemiDirectional,
+      note: "Focuses magic to a single point. Also makes loose particles rigid
+             and compact — the apprentices used it to harden the sand in
+             serpent's bed of sand. One triangle point usually faces inward.",
+      confidence: Canon,
+      seen_in: ["serpents_bed_of_sand", "twinned_bottles"],
+    ),
+    (
+      id: "collection",
+      tier: Official,
+      class: SemiDirectional,
+      note: "Collects material — and possibly magic — from above and around
+             the seal for the spell to use. Open side faces inward. This is
+             the sign that lets non-creating sigils (earth, wind) do anything
+             at all.",
+      confidence: Canon,
+      seen_in: ["billowing_collection", "serpents_bed_of_sand"],
+    ),
+    (
+      id: "billow",
+      tier: Official,
+      class: NonDirectional,
+      can_substitute_as_sigil: true,
+      requires: ["collection"],
+      note: "Converts material into cloud. Needs collection to gather the
+             material first. Some materials cannot be converted.",
+      confidence: Canon,
+    ),
+    (
+      id: "repetition",
+      tier: Official,
+      class: NonDirectional,
+      can_substitute_as_sigil: true,
+      note: "Resets affected objects to a previous state. Also listed as a
+             time sigil — it genuinely occupies both roles.",
+      confidence: Canon,
+    ),
+    (
+      id: "weave",
+      tier: Official,
+      class: NonDirectional,
+      placement: SurroundsSigil,
+      note: "Turns solid objects into long flexible ribbons on contact.
+             Invented in-story by Richeh — proof the system permits new signs.",
+      confidence: Canon,
+      seen_in: ["boulder_stretch_rope"],
+    ),
+
+    // Named in the source, effects not yet documented. Model them, give them
+    // no behaviour, and do NOT invent one.
+    ( id: "cool",             tier: Official, confidence: Unknown ),
+    ( id: "strengthen",       tier: Official, confidence: Unknown ),
+    ( id: "sights_set",       tier: Official, confidence: Unknown,
+      note: "Possibly mind-controllable, like puppet." ),
+    ( id: "entwine",          tier: Official, confidence: Unknown ),
+    ( id: "sign_of_wind",     tier: Official, confidence: Unknown ),
+    ( id: "aeriforms_defined",tier: Official, confidence: Unknown ),
+    ( id: "glaives",          tier: Official, confidence: Unknown ),
+
+    // ---- UNOFFICIAL -----------------------------------------------------
+    (
+      id: "window",
+      tier: Unofficial,
+      class: NonDirectional,
+      scope: SelfOnly,
+      note: "Restricts the spell to affecting only the object it is drawn on.
+             Isolated by comparing floating expansion against spell of
+             reduction.",
+      confidence: Inferred,
+    ),
+    (
+      id: "diamond",
+      tier: Unofficial,
+      class: NonDirectional,
+      scope: NearbyOnly,
+      note: "Restricts the spell to nearby objects, excluding the object it is
+             drawn on. The exact complement of window.",
+      confidence: Inferred,
+    ),
+    (
+      id: "enlarge",
+      tier: Unofficial,
+      class: NonDirectional,
+      reversible: true,
+      placement: Center,
+      requires_one_of: ["window", "diamond"],
+      note: "Grows objects (corners out) or shrinks them (corners in). Window
+             vs diamond decides self vs nearby.",
+      confidence: Inferred,
+      seen_in: ["floating_expansion", "spell_of_reduction"],
+    ),
+    (
+      id: "crosshair",
+      tier: Unofficial,
+      confidence: Unknown,
+      note: "From rainflinger. Three candidate functions: erase things of the
+             same magic aspect, restrict manifestation to inside matching
+             objects, or define an area of effect.",
+    ),
+    (
+      id: "radial",
+      tier: Unofficial,
+      class: NonDirectional,
+      note: "Likely weakens the spell — turns fire into gentle heat. A
+             damping coefficient, effectively.",
+      confidence: Inferred,
+      seen_in: ["snugstone_spell"],
+    ),
+    (
+      id: "bolt",
+      tier: Unofficial,
+      class: NonDirectional,
+      pairs_with: ["region"],
+      note: "Manifests magic as discrete bolt-like projectiles. Paired with
+             region to aim it, the projectiles fire at dangerous speed.",
+      confidence: Inferred,
+      seen_in: ["water_bolt"],
+    ),
+    (
+      id: "eye",
+      tier: Unofficial,
+      confidence: Unknown,
+      pairs_with: ["vision"],
+      note: "Never seen alone, so its solo effect is unknown. With vision,
+             relates to illusion and light manipulation.",
+      seen_in: ["gathering_shadows", "makeover_mask", "mirror_mantle"],
+    ),
+    (
+      id: "vision",
+      tier: Unofficial,
+      can_substitute_as_sigil: true,
+      note: "Relates to sight and visual perception. WITH eye: creates
+             illusions. WITHOUT eye: aids sight (Qifrey's glasses). Same sign,
+             two behaviours depending on company — a real compositional rule.",
+      confidence: Inferred,
+    ),
+    (
+      id: "bend",
+      tier: Unofficial,
+      confidence: Unknown,
+      note: "Appears in gathering shadows, petrification, possibly wall bend.
+             Common theme across all three is bending or altering reality —
+             vision, physical objects, or reality itself.",
+    ),
+    (
+      id: "rain",
+      tier: Unofficial,
+      class: NonDirectional,
+      placement: SurroundsSigil,
+      note: "Produces the sigil's magic as rainfall over the immediate area.
+             Wiki speculates fire or light would give firework-like effects,
+             and fire + earth might rain lava — speculation, not canon.",
+      confidence: Inferred,
+    ),
+    (
+      id: "puppet",
+      tier: Unofficial,
+      class: Asymmetric,
+      note: "Lets a user control the movement of the object the seal is drawn
+             on, apparently by mind. Movement type depends on the sigil —
+             wind puppet spells only move through air. Formerly listed as
+             'dancing puppet'.",
+      confidence: Inferred,
+      seen_in: ["flying_puppet_of_diversion", "cloak_spell", "sealchair"],
+    ),
+    ( id: "bind", tier: Unofficial, confidence: Unknown ),
+    ( id: "orb",  tier: Unofficial, confidence: Unknown ),
+    ( id: "link", tier: Unofficial, confidence: Unknown ),
+
+    // ---- DECORATIVE -----------------------------------------------------
+    (
+      id: "bird",
+      tier: Decorative,
+      placement: SurroundsSigil,
+      note: "Projects a bird made of the seal's magic that flies around a
+             while. Design changed between chapters 11 and 28.",
+      confidence: Canon,
+      seen_in: ["bird_of_light_beacon"],
+    ),
+    (
+      id: "animal_signs",
+      tier: Decorative,
+      note: "A collection of Zozah Peninsula animal shapes. No practical
+             utility; use is declining, kept as hobby and decoration. Good
+             flavour for a cosmetic system.",
+      confidence: Canon,
+    ),
+  ],
+)

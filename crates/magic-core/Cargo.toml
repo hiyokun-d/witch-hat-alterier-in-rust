@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# The only two dependencies core is allowed, and they exist to satisfy §4.4:
+# spell data lives in .ron, not in match arms. Both are pure Rust with no
+# platform surface, so §4.1 still holds — this compiles to wasm untouched.
+ron = "0.12"
+serde = { version = "1", features = ["derive"] }

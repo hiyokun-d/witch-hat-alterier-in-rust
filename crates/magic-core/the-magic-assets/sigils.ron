@@ -1,0 +1,187 @@
+// Sigils — the "what" of a spell. Japanese suffix: 紋 (mon), "crest/mark".
+//
+// Capabilities are the important part. Canon is explicit that different
+// sigils in the same family can do different things to the same substance:
+// wind MOVES air but cannot CREATE it; aeriforms CREATES air but cannot
+// MOVE it; earth manipulates solids but never creates them. Model these as
+// hard constraints and the simulation gets conservation laws for free.
+//
+// confidence:
+//   Canon      stated outright in the manga or by the wiki as established
+//   Inferred   wiki reconstruction from comparing spells
+//   Unknown    named in the source, effect not established
+
+(
+  sigils: [
+    // ---- FIRE family ----------------------------------------------------
+    (
+      id: "fire",
+      family: Fire,
+      jp: "炎の紋",
+      romaji: "honou no mon",
+      primary_tetrad: true,
+      caps: (create: true, manipulate: true, move: true, collect: false),
+      affects: ["flame", "heat"],
+      note: "Creates and manipulates flame or heat depending on the spell.",
+      confidence: Canon,
+      seen_in: ["pyreball_seal", "flame_burst", "flame_shot", "snugstone",
+                "spiraling_flame", "ring_of_fire", "warmth_retention"],
+    ),
+    (
+      id: "unburning_flames",
+      family: Fire,
+      primary_tetrad: false,
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      affects: ["flame"],
+      note: "Involved in producing flame without heat. May not be sufficient
+             alone — supporting signs are possibly required.",
+      confidence: Unknown,
+      seen_in: ["phantasmal_fireball"],
+    ),
+    (
+      id: "light",
+      family: Fire,
+      jp: "光の紋",
+      romaji: "hikari no mon",
+      primary_tetrad: false,
+      variant_of: "fire",
+      caps: (create: true, manipulate: true, move: true, collect: false),
+      affects: ["light"],
+      note: "Technically a fire variant (per Olruggio), but distinct enough
+             in usage that the wiki categorises light spells separately.",
+      confidence: Canon,
+      seen_in: ["bird_of_light_beacon", "floatglow_lamp", "light_beam",
+                "light_tracer"],
+    ),
+
+    // ---- WATER family ---------------------------------------------------
+    (
+      id: "water",
+      family: Water,
+      primary_tetrad: true,
+      caps: (create: true, manipulate: true, move: true, collect: true),
+      affects: ["water"],
+      // ENGINE NOTE: canon observes that long-duration water spells collect
+      // rather than create, implying creation is the more costly operation.
+      // Give create a higher cost than collect in the sim.
+      create_cost_multiplier: 4.0,
+      note: "Manipulates, collects, and creates water.",
+      confidence: Canon,
+      seen_in: ["watershot_seal", "water_bolt", "rainbringer_seal",
+                "rising_wave", "water_horse", "water_pen", "floating_drops"],
+    ),
+
+    // ---- EARTH family ---------------------------------------------------
+    (
+      id: "earth",
+      family: Earth,
+      jp: "地の紋",
+      romaji: "chi no mon",
+      primary_tetrad: true,
+      caps: (create: false, manipulate: true, move: true, collect: true),
+      affects: ["stone", "sand", "soil", "wood"],
+      note: "Manipulates solids. Explicitly CANNOT create them — earth magic
+             must find its material in the world.",
+      confidence: Canon,
+      seen_in: ["wall_breaker_seal", "integration", "sand_bridge",
+                "sand_cage", "serpents_bed_of_sand", "boulder_stretch_rope"],
+    ),
+
+    // ---- AIR family -----------------------------------------------------
+    (
+      id: "wind",
+      family: Air,
+      primary_tetrad: true,
+      caps: (create: false, manipulate: true, move: true, collect: false),
+      affects: ["air"],
+      note: "Moves and manipulates air. CANNOT create it.",
+      confidence: Canon,
+      seen_in: ["grasping_wind", "wind_wall", "skysoaring_seal",
+                "sylph_shoes_seal", "flying_puppet_of_diversion"],
+    ),
+    (
+      id: "aeriforms",
+      family: Air,
+      primary_tetrad: false,
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      affects: ["air"],
+      note: "Creates and manipulates air but cannot move it. The exact
+             complement of wind — pairing the two is the canon way to both
+             make and direct air.",
+      confidence: Canon,
+      seen_in: ["great_hall_mist"],
+    ),
+    (
+      id: "wind_underfoot",
+      family: Air,
+      primary_tetrad: false,
+      caps: (create: false, manipulate: true, move: false, collect: false),
+      affects: ["air"],
+      note: "Supports solid objects suspended in air, like a platform.
+             Mechanism unclear.",
+      confidence: Inferred,
+    ),
+    (
+      id: "whorling_winds",
+      family: Air,
+      primary_tetrad: false,
+      caps: (create: false, manipulate: true, move: true, collect: false),
+      affects: ["air"],
+      imparts_rotation: true,
+      note: "Manipulates air through rotation. THIS is the canon vortex
+             ingredient — rotation belongs to the sigil, not to a modifier
+             sign. Visually unlike the other air sigils for unknown reasons.",
+      confidence: Canon,
+    ),
+
+    // ---- TIME family ----------------------------------------------------
+    (
+      id: "repetition",
+      family: Time,
+      primary_tetrad: false,
+      can_substitute_as_sign: true,
+      caps: (create: false, manipulate: true, move: false, collect: false),
+      note: "Continuously resets affected objects to the state they held when
+             the spell took hold. Spring-like: restores an object whenever it
+             changes. Makes soft things elastic, prevents rot, cleans cloth.",
+      confidence: Canon,
+      seen_in: ["repetition_seal", "magic_cookpot", "washing_barrels"],
+    ),
+    (
+      id: "stop",
+      family: Time,
+      primary_tetrad: false,
+      caps: (create: false, manipulate: true, move: false, collect: false),
+      note: "Halts time outright for affected objects. Paired with another
+             sigil it freezes one aspect only — with fire, heat stops
+             changing. Compositional in a way nothing else is.",
+      confidence: Canon,
+    ),
+
+    // ---- MISC -----------------------------------------------------------
+    (
+      id: "crystal",
+      family: Misc,
+      primary_tetrad: false,
+      likely_variant_of: "earth",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      affects: ["crystal"],
+      note: "Creates and manipulates crystalline objects. Only Richeh uses
+             it. Notable as an apparent earth variant that CAN create,
+             unlike earth itself.",
+      confidence: Canon,
+      seen_in: ["crystal_shard"],
+    ),
+    (
+      id: "guidance",
+      family: Misc,
+      primary_tetrad: false,
+      caps: (create: false, manipulate: false, move: true, collect: true),
+      note: "Attracts objects matching parameters set by the other signs and
+             sigils in the same seal. A query, effectively — the rest of the
+             glyph is the predicate.",
+      confidence: Canon,
+      seen_in: ["guidance_orb", "pouch_of_calling"],
+    ),
+  ],
+)

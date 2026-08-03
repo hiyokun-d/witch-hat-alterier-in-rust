@@ -1,0 +1,206 @@
+// Known spell compositions — use these as COMPILER TEST FIXTURES.
+//
+// Each entry is a canon spell whose ingredient list is documented. If our
+// compiler is correct, feeding it these components must produce the stated
+// effect. This is the closest thing we have to a spec conformance suite.
+//
+// Only spells whose composition is actually documented are listed. Many
+// canon spells have visible glyphs nobody has fully decoded; those are
+// deliberately absent rather than guessed at.
+
+(
+  spells: [
+    (
+      id: "watershot_seal",
+      category: Water,
+      sigil: "water",
+      signs: [("column", Around)],
+      effect: "Shoots a stream of water straight up from the seal, assuming
+               all signs are of equivalent length.",
+      // TEST: unequal sign lengths must bias the output direction
+      test_note: "Canon states equal lengths give a vertical jet. Our
+                  implementation must therefore make length a real input, and
+                  unequal lengths must tilt the stream.",
+      first_appearance: "First spell Coco learned; misfired and hit Agott.",
+    ),
+    (
+      id: "pyreball_seal",
+      category: Fire,
+      sigil: "fire",
+      signs: [("levitation", Around)],
+      effect: "Produces a ball of flame that levitates itself and any
+               sufficiently light object directly above the seal.",
+      test_note: "Same sign arrangement as watershot but a different sigil.
+                  If our compiler produces structurally similar output for
+                  both, sigil swapping works correctly.",
+    ),
+    (
+      id: "wall_breaker_seal",
+      category: Earth,
+      sigil: "earth",
+      signs: [("crushing", Around)],
+      effect: "Pulverises solid material.",
+      test_note: "Its reverse is integration — see below. These two are the
+                  canonical reversibility test pair.",
+    ),
+    (
+      id: "integration",
+      category: Earth,
+      sigil: "earth",
+      signs: [("crushing", Around)],
+      reversed_signs: ["crushing"],
+      effect: "Reassembles pulverised material. Temporary.",
+      test_note: "compile(wall_breaker) + compile(integration) drawn together
+                  must cancel to zero net effect (canon rule R6).",
+    ),
+    (
+      id: "floating_expansion",
+      category: Niche,
+      sigil: None,
+      signs: [("enlarge", Center), ("window", Center), ("float", Around)],
+      effect: "Grows the object the seal is drawn on.",
+      test_note: "Differs from spell_of_reduction ONLY by window vs diamond
+                  and by enlarge orientation. If our compiler can't
+                  distinguish these two, the scope and orientation model is
+                  broken.",
+    ),
+    (
+      id: "spell_of_reduction",
+      category: Niche,
+      sigil: None,
+      signs: [("enlarge", Center), ("diamond", Center)],
+      reversed_signs: ["enlarge"],
+      effect: "Shrinks nearby objects, not the object it is drawn on.",
+    ),
+    (
+      id: "water_bolt",
+      category: Water,
+      sigil: "water",
+      signs: [("bolt", Around), ("region", Around)],
+      region_arrangement: AllSameSide,
+      effect: "Fires water projectiles at dangerous speed in the direction
+               the region signs point.",
+    ),
+    (
+      id: "floating_drops",
+      category: Mixed,
+      sigil: "water",
+      signs: [("region", Around)],
+      region_arrangement: Opposed,
+      effect: "Water manifests only along the ring itself.",
+      test_note: "The single best test of the region arrangement analyser.
+                  Same sigil and sign type as water_bolt, completely
+                  different output, decided purely by arrangement.",
+    ),
+    (
+      id: "serpents_bed_of_sand",
+      category: Earth,
+      sigil: None,
+      signs: [("collection", Around), ("convergence", Around)],
+      nested: true,
+      effect: "Gathers sand and compacts it into a hard, rigid surface.",
+      test_note: "A sigil-less spell with a sign in the centre — proves the
+                  compiler must accept glyphs with no sigil at all.",
+    ),
+    (
+      id: "boulder_stretch_rope",
+      category: Earth,
+      sigil: "earth",
+      signs: [("weave", SurroundsSigil)],
+      effect: "Turns stone into a long flexible ribbon.",
+      inventor: "Richeh — an in-story example of a witch inventing a new sign.",
+    ),
+    (
+      id: "twinned_bottles",
+      category: Forbidden,
+      sigil: None,
+      signs: [("convergence", Around), ("region", Around)],
+      sign_counts: {"convergence": 2, "region": 2},
+      region_arrangement: AllInward,
+      effect: "Teleports fluid between two bottles, keeping contents evenly
+               split regardless of distance.",
+      note: "Largely undeciphered — only the convergence and region signs are
+             identified. All other signs in the glyph are unfamiliar.",
+    ),
+    (
+      id: "snugstone_spell",
+      category: Fire,
+      sigil: "fire",
+      signs: [("radial", Around)],
+      effect: "Gentle sustained warmth rather than flame.",
+      test_note: "The damping test — same sigil as pyreball, radically lower
+                  intensity, from one sign.",
+    ),
+    (
+      id: "glowstone_path",
+      category: Light,
+      sigil: "light",
+      signs: [("levitation", Around)],
+      split_across_objects: true,
+      effect: "Glows only when stepped on — pressure presses the two halves
+               of the seal together, completing the ring.",
+      test_note: "THE split-spell fixture. compile(half_a + half_b joined)
+                  must equal compile(whole), and compile(half_a) alone must
+                  produce nothing (canon rules R2 and R3).",
+    ),
+  ],
+
+  // Edge cases that must be handled and are easy to get wrong.
+  edge_cases: [
+    (
+      id: "empty_closed_ring",
+      description: "A ring closed with no sigils and no signs inside it.",
+      canon_effect: "Produces a large shockwave and destroys the seal.",
+      // This is the single most surprising rule found in the research.
+      // An empty ring is NOT inert — it detonates. Our earlier design
+      // returned None here, which is wrong.
+      engine_note: "compile() must return a Discharge outcome, not an error
+                    and not None.",
+    ),
+    (
+      id: "insufficiently_circular_ring",
+      description: "A ring drawn too irregularly.",
+      canon_effect: "The spell may fail to activate at all.",
+      engine_note: "Justifies a hard threshold on circle-fit error, above
+                    which compilation fails outright rather than degrading.",
+    ),
+    (
+      id: "components_outside_ring",
+      description: "Sigils or signs drawn outside the ring.",
+      canon_effect: "They do not count toward the spell — UNLESS they connect
+                     to the ring, which does count.",
+      engine_note: "Containment cannot be a plain point-in-circle test. A
+                    sign whose stroke touches the ring is included.",
+    ),
+    (
+      id: "asymmetric_arrangement",
+      description: "Signs not in radial or bilateral symmetry.",
+      canon_effect: "Perfectly valid spell, but sometimes unstable.",
+      engine_note: "Compiles successfully with an Unstable warning. Never an
+                    error.",
+    ),
+    (
+      id: "unbalanced_sign_sizes",
+      description: "Signs of differing size or count on different sides.",
+      canon_effect: "Spell manifests toward the side with the most OR LARGEST
+                     signs. Radial symmetry does not count as unbalanced.",
+      engine_note: "Bias vector must weight by sign AREA, not just count.",
+    ),
+    (
+      id: "linked_identical_seals",
+      description: "Several small identical seals joined by lines.",
+      canon_effect: "Combined strength often exceeds a single large seal
+                     occupying the same total area.",
+      engine_note: "Superlinear, not additive. n linked copies > 1 seal of
+                     area n. The raincleaver relies on this.",
+    ),
+    (
+      id: "glyph_retcon",
+      description: "Some early-manga glyphs were later redrawn differently —
+                    e.g. early wall breaker used a levitation keystone where
+                    an earth sigil now sits.",
+      engine_note: "Not an engine rule, a data-curation rule: when versions
+                    conflict, the newer form wins.",
+    ),
+  ],
+)
