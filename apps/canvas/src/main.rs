@@ -16,14 +16,19 @@ use shortcuts::{clear, command_held, redo, undo};
 /// belongs in core, where it can be reasoned about as part of stroke neatness.
 const MIN_POINT_SPACING: f32 = 2.0;
 
-/// Half of `DefaultPlugins`' default window, in world units. Hardcoded because
-/// the credit is spawned once at startup — resize the window and it stops
-/// tracking the corner. Fine while the window is fixed; the day it isn't, this
-/// becomes a system that reads `Window::resolution`.
-const WINDOW_HALF: Vec2 = Vec2::new(640.0, 360.0);
-
 /// Gap between the credit and the window edge.
 const CREDIT_MARGIN: f32 = 16.0;
+
+/// Gap between the paper disc and the nearest window edge.
+///
+/// Wider than the credit's margin so the sheet reads as an object lying on the
+/// desk rather than a viewport that happens to be round.
+const PAPER_MARGIN: f32 = 28.0;
+
+/// Behind everything. Ink is drawn with gizmos, which ignore z and always land
+/// on top, but the credit is `Text2d` and would otherwise be hidden by a sheet
+/// spawned after it.
+const PAPER_Z: f32 = -10.0;
 
 /// Stroke weight in pixels. Seals in the source run roughly 2–3% of the glyph's
 /// diameter, so a palm-sized seal on a 1280px window lands near here.
@@ -32,6 +37,10 @@ const INK_WIDTH: f32 = 5.0;
 /// Aged parchment. Witches in the source draw dark on warm paper, never on
 /// white — the cream is what keeps ink from reading as harsh.
 const PAPER: Color = Color::srgb_u8(0xE8, 0xDC, 0xC4);
+
+/// The surface the sheet lies on. Dark enough that the parchment reads as lit,
+/// warm enough that it does not look like a UI panel.
+const DESK: Color = Color::srgb_u8(0x3A, 0x2E, 0x22);
 
 /// Iron-gall black: as dark as the paper allows, biased brown rather than blue.
 const INK: Color = Color::srgb_u8(0x22, 0x1C, 0x18);
@@ -55,13 +64,35 @@ pub struct InkPad {
     pub undone: Vec<Vec<Point>>,
 }
 
+/// Marks the signature in the corner so [`place_credit`] can find it.
+///
+/// Empty on purpose. A query filters by component *type*, so the type being
+/// present on one entity and absent everywhere else is the whole payload —
+/// without it, `Query<&mut Transform>` would also match the camera and every
+/// debug line.
+#[derive(Component)]
+pub struct Credit;
+
+/// Marks the round sheet of parchment so [`fit_paper`] can resize it.
+///
+/// Public so the debug overlay can read where the sheet is without the sheet
+/// having to know the overlay exists.
+#[derive(Component)]
+pub struct Paper;
+
 // all of the code will be start here just like C
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "Witch hat atelier".to_string(),
+                ..default()
+            }),
+            ..default()
+        }))
         // Scaffolding. Delete this line and `mod debug;` and nothing breaks.
         .add_plugins(debug::DebugOverlayPlugin)
-        .insert_resource(ClearColor(PAPER))
+        .insert_resource(ClearColor(DESK))
         .init_resource::<InkPad>()
         .add_systems(Startup, setup)
         // Shortcuts run after capture so an undo pressed mid-drag wins the
@@ -69,13 +100,35 @@ fn main() {
         // earlier. Drawing comes last so the pad it renders is this frame's.
         .add_systems(
             Update,
-            (capture_stroke, keyboard_shortcut, draw_ink).chain(),
+            (
+                capture_stroke,
+                keyboard_shortcut,
+                draw_ink,
+                place_credit,
+                fit_paper,
+            )
+                .chain(),
         )
         .run();
 }
 
-fn setup(mut commands: Commands, mut gizmo_config: ResMut<GizmoConfigStore>) {
+fn setup(
+    mut commands: Commands,
+    mut gizmo_config: ResMut<GizmoConfigStore>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     commands.spawn(Camera2d);
+
+    // A unit circle, scaled by `fit_paper` rather than rebuilt. Mesh assets are
+    // vertex buffers uploaded to the GPU; regenerating one every frame to change
+    // its size would be the expensive way to do a multiply.
+    commands.spawn((
+        Mesh2d(meshes.add(Circle::new(1.0))),
+        MeshMaterial2d(materials.add(PAPER)),
+        Transform::from_xyz(0.0, 0.0, PAPER_Z),
+        Paper,
+    ));
 
     // Gizmo lines default to 2px, which reads as a pencil sketch. Seals in the
     // source are inked with a broad nib — heavy enough that the ring and the
@@ -94,15 +147,13 @@ fn setup(mut commands: Commands, mut gizmo_config: ResMut<GizmoConfigStore>) {
             ..default()
         },
         TextColor(CREDIT),
-        // Anchored by its own bottom-right corner, so the transform below is
-        // where the text *ends*, not where it centres. Without this the string
-        // straddles the point and half of it hangs off the window.
+        // Anchored by its own bottom-right corner, so the transform is where the
+        // text *ends*, not where it centres. Without this the string straddles
+        // the point and half of it hangs off the window.
         Anchor::BOTTOM_RIGHT,
-        Transform::from_xyz(
-            WINDOW_HALF.x - CREDIT_MARGIN,
-            -WINDOW_HALF.y + CREDIT_MARGIN,
-            0.0,
-        ),
+        // No `Transform` here: `place_credit` writes one every frame, and it
+        // runs before the first frame is drawn.
+        Credit,
     ));
 }
 
@@ -227,4 +278,36 @@ pub fn draw_ink(mut gizmos: Gizmos, pad: Res<InkPad>) {
 
         gizmos.line_2d(Vec2::new(start.x, start.y), Vec2::new(end.x, end.y), INK)
     }
+}
+
+/// Sizes the parchment disc to the window, leaving [`PAPER_MARGIN`] of desk.
+///
+/// The sheet is a unit circle, so fitting it is a scale, not a new mesh. Driven
+/// by the *shorter* window axis, which is what keeps it a full circle instead of
+/// letting a wide window push its top and bottom off screen.
+fn fit_paper(window: Single<&Window>, mut paper: Single<&mut Transform, With<Paper>>) {
+    let shorter = window.width().min(window.height());
+
+    // A window dragged smaller than twice the margin would ask for a negative
+    // radius, which flips the mesh inside out. One pixel of paper is the floor.
+    let radius = (shorter * 0.5 - PAPER_MARGIN).max(1.0);
+
+    // Uniform scale on x and y only: z stays 1.0 so `PAPER_Z` keeps its meaning.
+    paper.scale = Vec3::new(radius, radius, 1.0);
+}
+
+/// Keeps the signature in the bottom-right corner as the window resizes.
+///
+/// Runs every frame rather than only on a resize event: it is two float writes,
+/// and reacting to events would mean handling the first frame, monitor changes,
+/// and DPI shifts as separate cases.
+fn place_credit(window: Single<&Window>, mut credit: Single<&mut Transform, With<Credit>>) {
+    // The world puts its origin at the centre with +y up, so the bottom-right
+    // corner is half the width to the right and half the height down. The two
+    // axes need opposite signs, which is why this is not one multiply.
+    let corner = Vec2::new(window.width(), -window.height()) * 0.5;
+
+    // Pulled back in along both axes: x toward the centre, y up off the edge.
+    credit.translation.x = corner.x - CREDIT_MARGIN;
+    credit.translation.y = corner.y + CREDIT_MARGIN;
 }

@@ -270,6 +270,17 @@ These are the _interesting_ ones. Each becomes a real rule in our engine.
 8. **Quality is geometric.** Larger seals are stronger. Neater seals last
    longer.
 
+**Nothing above constrains drawing _order_.** Canon never says the ring comes
+first, and rules 2 and 3 both describe seals whose contents exist before the
+ring closes — an unclosed ring is a fully prepared spell waiting on its last
+stroke, and half a split seal is drawn with no complete ring at all. A player
+who draws the sigil, then the signs, then the ring last is doing the canonical
+thing, not a weird thing.
+
+So the engine never enforces an order, and never rejects a stroke for arriving
+too early. It also never _forbids_ ring-first — both orders, and every order in
+between, produce the same glyph. See §3.3 for what that requires of the types.
+
 ### 2.5 What we invent (clearly marked, not canon)
 
 Canon never explains _why_ magic works — it's a hard system with defined
@@ -367,6 +378,14 @@ constraint, so it goes in early, not as polish.
   asymmetry sets **without** causing failure.
 - **`Glyph.sigil` is `Option`** — §2.1. A sigil-less glyph driven by repetition,
   billow, or vision compiles fine.
+- **Glyph assembly is geometric, never chronological.** Grouping strokes into a
+  glyph is a query over the finished pad — find the closed loops, take
+  everything each one contains or touches (rule 1), classify the rest. Stroke
+  order is not an input, which is the same reason the recognizer uses $P.
+  Concretely: `Glyph::new` must stop demanding a ring at construction, since
+  that signature alone makes ring-first the only expressible order.
+- **Strokes belonging to no ring are inert, not invalid.** They stay on the pad
+  unclassified. A player halfway through a seal has drawn nothing wrong.
 - **Quality** is an `f32` derived from stroke neatness, on everything — rule 8.
 - **Compilation returns a spell _plus warnings_.** Unstable is not an error.
   Nesting activation order is canonically undecided (rule 4), so that ambiguity
@@ -423,6 +442,7 @@ He will run them hundreds of times. Keep them fast.
 | Recognition is stroke-order-invariant                                  | $P's whole point                      |
 | Reversing a stroke doesn't change the match                            | Same                                  |
 | `compile(a) == compile(b)` when a and b are the same glyph drawn twice | Determinism                           |
+| The same seal compiles identically drawn ring-first and ring-last      | §2.4 — order is never an input         |
 | A spell + its reversed twin produce zero net effect                    | Canon rule 6                          |
 | An open ring never produces effects                                    | Canon rule 2                          |
 | Closing a split ring produces the same spell as drawing it whole       | Canon rule 3                          |
