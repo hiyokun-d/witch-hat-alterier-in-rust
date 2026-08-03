@@ -12,7 +12,7 @@
   spells: [
     (
       id: "watershot_seal",
-      category: Water,
+      category: "Water",
       sigil: "water",
       signs: [("column", Around)],
       effect: "Shoots a stream of water straight up from the seal, assuming
@@ -25,7 +25,7 @@
     ),
     (
       id: "pyreball_seal",
-      category: Fire,
+      category: "Fire",
       sigil: "fire",
       signs: [("levitation", Around)],
       effect: "Produces a ball of flame that levitates itself and any
@@ -36,7 +36,7 @@
     ),
     (
       id: "wall_breaker_seal",
-      category: Earth,
+      category: "Earth",
       sigil: "earth",
       signs: [("crushing", Around)],
       effect: "Pulverises solid material.",
@@ -45,7 +45,7 @@
     ),
     (
       id: "integration",
-      category: Earth,
+      category: "Earth",
       sigil: "earth",
       signs: [("crushing", Around)],
       reversed_signs: ["crushing"],
@@ -55,7 +55,7 @@
     ),
     (
       id: "floating_expansion",
-      category: Niche,
+      category: "Niche",
       sigil: None,
       signs: [("enlarge", Center), ("window", Center), ("float", Around)],
       effect: "Grows the object the seal is drawn on.",
@@ -66,7 +66,7 @@
     ),
     (
       id: "spell_of_reduction",
-      category: Niche,
+      category: "Niche",
       sigil: None,
       signs: [("enlarge", Center), ("diamond", Center)],
       reversed_signs: ["enlarge"],
@@ -74,7 +74,7 @@
     ),
     (
       id: "water_bolt",
-      category: Water,
+      category: "Water",
       sigil: "water",
       signs: [("bolt", Around), ("region", Around)],
       region_arrangement: AllSameSide,
@@ -83,7 +83,7 @@
     ),
     (
       id: "floating_drops",
-      category: Mixed,
+      category: "Mixed",
       sigil: "water",
       signs: [("region", Around)],
       region_arrangement: Opposed,
@@ -94,7 +94,7 @@
     ),
     (
       id: "serpents_bed_of_sand",
-      category: Earth,
+      category: "Earth",
       sigil: None,
       signs: [("collection", Around), ("convergence", Around)],
       nested: true,
@@ -104,7 +104,7 @@
     ),
     (
       id: "boulder_stretch_rope",
-      category: Earth,
+      category: "Earth",
       sigil: "earth",
       signs: [("weave", SurroundsSigil)],
       effect: "Turns stone into a long flexible ribbon.",
@@ -112,7 +112,7 @@
     ),
     (
       id: "twinned_bottles",
-      category: Forbidden,
+      category: "Forbidden",
       sigil: None,
       signs: [("convergence", Around), ("region", Around)],
       sign_counts: {"convergence": 2, "region": 2},
@@ -124,7 +124,7 @@
     ),
     (
       id: "snugstone_spell",
-      category: Fire,
+      category: "Fire",
       sigil: "fire",
       signs: [("radial", Around)],
       effect: "Gentle sustained warmth rather than flame.",
@@ -133,7 +133,7 @@
     ),
     (
       id: "glowstone_path",
-      category: Light,
+      category: "Light",
       sigil: "light",
       signs: [("levitation", Around)],
       split_across_objects: true,

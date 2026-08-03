@@ -19,14 +19,6 @@ cd "$(dirname "$0")"
 
 APP="target/Canvas.app"
 
-# Fires on normal exit, on Ctrl-C, and on kill — so quitting the app or
-# interrupting the script never leaves a stale bundle behind. Only the bundle
-# goes; `target/` itself is the build cache and rebuilding it costs minutes.
-cleanup() {
-	rm -rf "$APP"
-}
-trap cleanup EXIT INT TERM
-
 cargo build -p canvas
 
 rm -rf "$APP"

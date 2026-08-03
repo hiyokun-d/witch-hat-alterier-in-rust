@@ -6,7 +6,7 @@ use magic_core::Point;
 mod debug;
 mod shortcuts;
 
-use shortcuts::{command_held, redo, undo};
+use shortcuts::{clear, command_held, redo, undo};
 
 /// Closer than this and a sample is dropped. A motionless hand still fires
 /// `pressed` every frame, and hundreds of identical points would skew every
@@ -106,7 +106,7 @@ fn setup(mut commands: Commands, mut gizmo_config: ResMut<GizmoConfigStore>) {
     ));
 }
 
-/// ⌘Z / Ctrl+Z undoes a stroke, ⇧⌘Z or Ctrl+Y puts it back.
+/// ⌘Z / Ctrl+Z undoes a stroke, ⇧⌘Z or Ctrl+Y puts it back, ⌘⌫ wipes the pad.
 ///
 /// Modifiers use `pressed`, the action key uses `just_pressed`: a modifier is a
 /// state you hold, the action is an edge. Asking `just_pressed` of both would
@@ -124,18 +124,24 @@ fn keyboard_shortcut(
         return;
     }
 
-    if !command_held(&keys) {
-        return;
+    // ignore the ctrl shortcuts
+    if keys.just_pressed(KeyCode::KeyA) {
+        println!("Changing brushes or something i don't know")
     }
 
-    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    // using ctrl for the shortcuts
+    if command_held(&keys) {
+        let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
 
-    // Redo first: ⇧⌘Z also satisfies the plain undo test, so checking undo
-    // first would swallow it.
-    if (shift && keys.just_pressed(KeyCode::KeyZ)) || keys.just_pressed(KeyCode::KeyY) {
-        redo(&mut pad);
-    } else if keys.just_pressed(KeyCode::KeyZ) {
-        undo(&mut pad);
+        // Redo first: ⇧⌘Z also satisfies the plain undo test, so checking undo
+        // first would swallow it.
+        if (shift && keys.just_pressed(KeyCode::KeyZ)) || keys.just_pressed(KeyCode::KeyY) {
+            redo(&mut pad);
+        } else if keys.just_pressed(KeyCode::KeyZ) {
+            undo(&mut pad);
+        } else if shift && keys.just_pressed(KeyCode::Backspace) {
+            clear(&mut pad);
+        }
     }
 }
 

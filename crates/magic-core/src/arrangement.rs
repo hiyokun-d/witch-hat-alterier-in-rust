@@ -11,7 +11,8 @@
 
 use core::f32::consts::{PI, TAU};
 
-use crate::glyph::{Sign, SignKind};
+use crate::catalog::{RegionPattern, SignId};
+use crate::glyph::Sign;
 
 /// Folds an angle into `0.0..TAU`.
 ///
@@ -137,24 +138,21 @@ fn mirrors_onto_itself(signs: &[Sign], axis: f32, tolerance: f32) -> bool {
     })
 }
 
-/// Where a spell manifests, decided by every [`SignKind::Region`] sign together.
+/// Where a spell manifests, decided by every region sign together.
 ///
-/// The four canon cases plus two honest non-answers. See CLAUDE.md §2.3.
+/// The four canon patterns plus two honest non-answers. The patterns reuse
+/// [`RegionPattern`] rather than redeclaring them, so a computed arrangement can
+/// be compared directly against the one a spell fixture records.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RegionArrangement {
     /// No region signs. The spell manifests wherever its other signs say.
     Absent,
-    /// Every sign points the same way — the magic shoots that direction. Carries
-    /// the mean heading in radians.
-    OneSide { direction: f32 },
-    /// Every sign points inward: manifests only inside the ring.
-    Inward,
-    /// Every sign points outward: manifests only outside the ring, with no
-    /// effect inside it.
-    Outward,
-    /// Some in, some out. The magic manifests *on* the ring itself — the
-    /// floating drops.
-    OnRing,
+    /// One of the four canon patterns. `heading` is the mean direction in
+    /// radians, and is only meaningful for [`RegionPattern::AllSameSide`].
+    Canon {
+        pattern: RegionPattern,
+        heading: Option<f32>,
+    },
     /// Region signs are present but all lie tangent to the ring, pointing
     /// neither in nor out nor together. Canon describes no such spell, so this
     /// is reported rather than guessed at.
@@ -162,16 +160,30 @@ pub enum RegionArrangement {
 }
 
 impl RegionArrangement {
+    /// The canon pattern this arrangement matches, if any.
+    pub fn pattern(&self) -> Option<RegionPattern> {
+        match self {
+            RegionArrangement::Canon { pattern, .. } => Some(*pattern),
+            _ => None,
+        }
+    }
+}
+
+impl RegionArrangement {
     /// Reads the arrangement off a glyph's signs.
     ///
-    /// `deadband` is how far from tangent a sign must point before it counts as
-    /// in or out; `spread` is how tightly headings must agree to read as one
-    /// direction. Both in radians.
-    pub fn classify(signs: &[Sign], deadband: f32, spread: f32) -> RegionArrangement {
-        let region: Vec<&Sign> = signs
-            .iter()
-            .filter(|sign| sign.kind == SignKind::Region)
-            .collect();
+    /// `region` names which sign kind is the region sign, rather than the id
+    /// being baked in here — the sign set is data, and the catalog is what knows
+    /// its ids. `deadband` is how far from tangent a sign must point before it
+    /// counts as in or out; `spread` is how tightly headings must agree to read
+    /// as one direction. Both in radians.
+    pub fn classify(
+        signs: &[Sign],
+        region: &SignId,
+        deadband: f32,
+        spread: f32,
+    ) -> RegionArrangement {
+        let region: Vec<&Sign> = signs.iter().filter(|sign| &sign.kind == region).collect();
 
         if region.is_empty() {
             return RegionArrangement::Absent;
@@ -181,17 +193,25 @@ impl RegionArrangement {
         // *incidentally* inward or outward depending on where they happen to
         // sit, and canon treats "all one side" as its own case.
         if let Some(direction) = common_heading(&region, spread) {
-            return RegionArrangement::OneSide { direction };
+            return RegionArrangement::Canon {
+                pattern: RegionPattern::AllSameSide,
+                heading: Some(direction),
+            };
         }
 
         let any_inward = region.iter().any(|sign| sign.points_inward(deadband));
         let any_outward = region.iter().any(|sign| sign.points_outward(deadband));
 
-        match (any_inward, any_outward) {
-            (true, true) => RegionArrangement::OnRing,
-            (true, false) => RegionArrangement::Inward,
-            (false, true) => RegionArrangement::Outward,
-            (false, false) => RegionArrangement::Indeterminate,
+        let pattern = match (any_inward, any_outward) {
+            (true, true) => RegionPattern::Opposed,
+            (true, false) => RegionPattern::AllInward,
+            (false, true) => RegionPattern::AllOutward,
+            (false, false) => return RegionArrangement::Indeterminate,
+        };
+
+        RegionArrangement::Canon {
+            pattern,
+            heading: None,
         }
     }
 }
@@ -221,13 +241,16 @@ fn common_heading(signs: &[&Sign], spread: f32) -> Option<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::glyph::SignKind;
     use core::f32::consts::{FRAC_PI_2, FRAC_PI_4};
 
+    /// The catalog id of the region sign. A literal here rather than a lookup:
+    /// these tests exercise the geometry, not the loader.
+    const REGION: &str = "region";
+
     /// A sign sitting at `placement`, pointing straight out from the centre.
-    fn spoke(kind: SignKind, placement: f32) -> Sign {
+    fn spoke(kind: &str, placement: f32) -> Sign {
         Sign {
-            kind,
+            kind: kind.into(),
             placement,
             orientation: placement,
             reversed: false,
@@ -236,7 +259,7 @@ mod tests {
 
     fn region_at(placement: f32, orientation: f32) -> Sign {
         Sign {
-            kind: SignKind::Region,
+            kind: REGION.into(),
             placement,
             orientation,
             reversed: false,
@@ -244,7 +267,7 @@ mod tests {
     }
 
     /// `n` signs of one kind, evenly spaced.
-    fn evenly_spaced(kind: SignKind, n: usize) -> Vec<Sign> {
+    fn evenly_spaced(kind: &str, n: usize) -> Vec<Sign> {
         (0..n)
             .map(|i| spoke(kind, TAU * i as f32 / n as f32))
             .collect()
@@ -259,19 +282,19 @@ mod tests {
 
     #[test]
     fn one_sign_is_bilateral() {
-        let signs = [spoke(SignKind::Column, 1.0)];
+        let signs = [spoke("column", 1.0)];
         assert_eq!(Symmetry::classify(&signs, TOL), Symmetry::Bilateral);
     }
 
     #[test]
     fn four_identical_signs_evenly_spaced_are_radial() {
-        let signs = evenly_spaced(SignKind::Column, 4);
+        let signs = evenly_spaced("column", 4);
         assert_eq!(Symmetry::classify(&signs, TOL), Symmetry::Radial);
     }
 
     #[test]
     fn radial_survives_hand_drawn_slop() {
-        let mut signs = evenly_spaced(SignKind::Column, 6);
+        let mut signs = evenly_spaced("column", 6);
         signs[2].placement += TOL / 2.0;
         assert_eq!(Symmetry::classify(&signs, TOL), Symmetry::Radial);
     }
@@ -282,11 +305,7 @@ mod tests {
     fn alternating_kinds_evenly_spaced_are_radial() {
         let signs: Vec<Sign> = (0..12)
             .map(|i| {
-                let kind = if i % 2 == 0 {
-                    SignKind::Convergence
-                } else {
-                    SignKind::Region
-                };
+                let kind = if i % 2 == 0 { "convergence" } else { "region" };
                 spoke(kind, TAU * i as f32 / 12.0)
             })
             .collect();
@@ -298,9 +317,9 @@ mod tests {
     #[test]
     fn evenly_spaced_signs_of_three_different_kinds_are_not_radial() {
         let signs = vec![
-            spoke(SignKind::Column, 0.0),
-            spoke(SignKind::Pull, TAU / 3.0),
-            spoke(SignKind::Crush, 2.0 * TAU / 3.0),
+            spoke("column", 0.0),
+            spoke("pulling", TAU / 3.0),
+            spoke("crushing", 2.0 * TAU / 3.0),
         ];
         assert_ne!(Symmetry::classify(&signs, TOL), Symmetry::Radial);
     }
@@ -308,31 +327,31 @@ mod tests {
     #[test]
     fn two_signs_mirrored_about_the_vertical_are_bilateral() {
         let signs = vec![
-            spoke(SignKind::Column, FRAC_PI_2 - FRAC_PI_4),
-            spoke(SignKind::Column, FRAC_PI_2 + FRAC_PI_4),
+            spoke("column", FRAC_PI_2 - FRAC_PI_4),
+            spoke("column", FRAC_PI_2 + FRAC_PI_4),
         ];
         assert_eq!(Symmetry::classify(&signs, TOL), Symmetry::Bilateral);
     }
 
     #[test]
     fn a_lone_extra_sign_makes_the_arrangement_asymmetric() {
-        let mut signs = evenly_spaced(SignKind::Column, 4);
-        signs.push(spoke(SignKind::Pull, 0.3));
+        let mut signs = evenly_spaced("column", 4);
+        signs.push(spoke("pulling", 0.3));
         assert_eq!(Symmetry::classify(&signs, TOL), Symmetry::Asymmetric);
     }
 
     #[test]
     fn mirrored_pair_of_different_kinds_is_asymmetric() {
         let signs = vec![
-            spoke(SignKind::Column, FRAC_PI_2 - FRAC_PI_4),
-            spoke(SignKind::Pull, FRAC_PI_2 + FRAC_PI_4),
+            spoke("column", FRAC_PI_2 - FRAC_PI_4),
+            spoke("pulling", FRAC_PI_2 + FRAC_PI_4),
         ];
         assert_eq!(Symmetry::classify(&signs, TOL), Symmetry::Asymmetric);
     }
 
     #[test]
     fn classification_ignores_the_order_signs_were_drawn_in() {
-        let forward = evenly_spaced(SignKind::Column, 5);
+        let forward = evenly_spaced("column", 5);
         let mut backward = forward.clone();
         backward.reverse();
         assert_eq!(
@@ -346,9 +365,9 @@ mod tests {
 
     #[test]
     fn no_region_signs_is_absent() {
-        let signs = evenly_spaced(SignKind::Column, 4);
+        let signs = evenly_spaced("column", 4);
         assert_eq!(
-            RegionArrangement::classify(&signs, DEADBAND, SPREAD),
+            RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD),
             RegionArrangement::Absent
         );
     }
@@ -362,8 +381,11 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            RegionArrangement::classify(&signs, DEADBAND, SPREAD),
-            RegionArrangement::Outward
+            RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD),
+            RegionArrangement::Canon {
+                pattern: RegionPattern::AllOutward,
+                heading: None
+            }
         );
     }
 
@@ -376,8 +398,11 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            RegionArrangement::classify(&signs, DEADBAND, SPREAD),
-            RegionArrangement::Inward
+            RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD),
+            RegionArrangement::Canon {
+                pattern: RegionPattern::AllInward,
+                heading: None
+            }
         );
     }
 
@@ -390,8 +415,11 @@ mod tests {
             region_at(PI + FRAC_PI_2, FRAC_PI_2),
         ];
         assert_eq!(
-            RegionArrangement::classify(&signs, DEADBAND, SPREAD),
-            RegionArrangement::OnRing
+            RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD),
+            RegionArrangement::Canon {
+                pattern: RegionPattern::Opposed,
+                heading: None
+            }
         );
     }
 
@@ -402,8 +430,11 @@ mod tests {
             region_at(FRAC_PI_2, FRAC_PI_2),
             region_at(PI, FRAC_PI_2),
         ];
-        match RegionArrangement::classify(&signs, DEADBAND, SPREAD) {
-            RegionArrangement::OneSide { direction } => {
+        match RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD) {
+            RegionArrangement::Canon {
+                pattern: RegionPattern::AllSameSide,
+                heading: Some(direction),
+            } => {
                 assert!(angular_distance(direction, FRAC_PI_2) <= SPREAD);
             }
             other => panic!("expected OneSide, got {other:?}"),
@@ -419,8 +450,11 @@ mod tests {
             region_at(FRAC_PI_2, TAU - 0.1),
             region_at(PI, 0.0),
         ];
-        match RegionArrangement::classify(&signs, DEADBAND, SPREAD) {
-            RegionArrangement::OneSide { direction } => {
+        match RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD) {
+            RegionArrangement::Canon {
+                pattern: RegionPattern::AllSameSide,
+                heading: Some(direction),
+            } => {
                 assert!(angular_distance(direction, 0.0) <= SPREAD);
             }
             other => panic!("expected OneSide, got {other:?}"),
@@ -431,7 +465,7 @@ mod tests {
     fn region_signs_lying_tangent_are_indeterminate() {
         let signs = vec![region_at(0.0, FRAC_PI_2), region_at(PI, PI + FRAC_PI_2)];
         assert_eq!(
-            RegionArrangement::classify(&signs, DEADBAND, SPREAD),
+            RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD),
             RegionArrangement::Indeterminate
         );
     }
@@ -444,10 +478,13 @@ mod tests {
                 region_at(p, p)
             })
             .collect();
-        signs.push(spoke(SignKind::Bird, 0.7));
+        signs.push(spoke("bird", 0.7));
         assert_eq!(
-            RegionArrangement::classify(&signs, DEADBAND, SPREAD),
-            RegionArrangement::Outward
+            RegionArrangement::classify(&signs, &REGION.into(), DEADBAND, SPREAD),
+            RegionArrangement::Canon {
+                pattern: RegionPattern::AllOutward,
+                heading: None
+            }
         );
     }
 }

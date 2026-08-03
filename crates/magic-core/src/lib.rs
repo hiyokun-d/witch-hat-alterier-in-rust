@@ -1,9 +1,9 @@
 pub mod arrangement;
+pub mod catalog;
 pub mod glyph;
 pub use arrangement::{RegionArrangement, Symmetry};
-pub use glyph::{
-    CanonTier, Capabilities, Glyph, GlyphId, Ring, Sigil, SigilFamily, Sign, SignKind,
-};
+pub use catalog::{Capabilities, Catalog, CatalogError, RegionPattern, SigilId, SignId};
+pub use glyph::{Glyph, GlyphId, Ring, Sign};
 
 // The point struct that will have x, y also stroke_id for each of stroke that in the magic
 #[derive(Debug, Clone, Copy, PartialEq)]

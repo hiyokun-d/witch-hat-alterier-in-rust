@@ -303,29 +303,36 @@ we'd invent.
 Live in `magic-core`. Do not let Bevy types leak into these.
 
 ```
-Sigil       ← one sigil variant + its family + its capabilities
-Sign        ← Sign (Column, Region, …) + orientation + reversed + canon tier
-Ring        ← Ring   (center, radius, closed: bool, quality: f32)
+SigilId     ← names a sigil in sigils.ron
+SignId      ← names a sign in signs.ron
+Sign        ← SignId + placement + orientation + reversed
+Ring        ← center, radius, closed: bool, quality: f32
 Glyph       ← one spell (optional sigil + signs + ring + nesting + links)
+Catalog     ← the .ron files, parsed and cross-checked
 Spell       ← compiled Glyph + warnings, ready to run
 ```
 
-### 3.1 Sigils are two levels, not one
+### 3.1 Nothing about a sigil is an enum
 
-`Element` as a flat five-variant enum is wrong and has to go. A sigil is a
-**family** plus a **variant**, and every behavioural question is answered by
-the variant. The family exists for grouping and for reactions, nothing else.
+`Element` as a flat five-variant enum is wrong and has to go — but so is the
+thirteen-variant enum that first replaced it. §4.4 says adding a spell must not
+require recompiling, and an enum of sigils breaks that the day someone adds one.
 
-- `SigilFamily` — `Fire · Water · Earth · Air · Time · Misc`
-- `Sigil` — the variant: `Fire, UnburningFlames, Light, Water, Earth, Wind,
-  Aeriforms, WindUnderfoot, WhorlingWinds, Repetition, Stop, Crystal, Guidance`
+So the split is **schema in code, content in data**:
+
+- **Code** holds the closed vocabularies the data draws from — `Family`,
+  `Tier`, `Confidence`, `Class`, `Slot`, `Scope`, `RegionPattern`. Adding a
+  seventh family is a genuine design change and should cost a recompile.
+- **Data** holds every sigil, sign, and spell. `SigilId` and `SignId` are
+  newtypes over `String`, and `Catalog` is the only thing that maps an id to
+  behaviour.
 
 Since a sigil's size and position are canonically irrelevant (§2.2), neither
-belongs on this type, and the recognizer must not feed them in.
+belongs on the type, and the recognizer must not feed them in.
 
 ### 3.2 Capabilities — the most valuable thing in the research
 
-Each sigil variant carries what it is _able to do_:
+Each sigil variant records what it is _able to do_, in `sigils.ron`:
 
 ```
 can_create · can_manipulate · can_move · can_collect
@@ -341,12 +348,16 @@ constraint, so it goes in early, not as polish.
 ### 3.3 What each type needs
 
 - **`Sign`** needs `orientation` and a `reversed` flag — rules 6 and 7 are
-  meaningless without them. It also needs a `canon` tier
-  (`Official | Unofficial | Decorative`) and a `can_be_sigil` answer, true for
-  Repetition, Billow, and Vision.
+  meaningless without them — plus a **`placement`**: the angle it sits at around
+  the ring. Inward and outward are questions about direction _relative to
+  position_, so the same sign at the top and at the bottom of a ring means
+  different things. Rule 1's containment test needs the position too.
+- **Tier and substitution live in the data**, not on the type. `Catalog` answers
+  whether a sign is decorative and whether it can stand in for a sigil.
 - **Region analysis** is a function over the whole sign set, not a per-sign
   property. The four cases in §2.3 are computed from where every region sign
-  points collectively.
+  points collectively, and the result reuses `RegionPattern` so a computed
+  arrangement can be compared straight against a spell fixture.
 - **`Ring`** needs `closed` as real state, not an assumption — rules 2 and 3.
   Its containment test must satisfy rule 1's _connecting to_ clause: a sign
   touching the ring counts, so a point-in-circle check is insufficient.
@@ -354,8 +365,8 @@ constraint, so it goes in early, not as polish.
   ids (rule 5), a symmetry classification
   (`Radial | Bilateral | Asymmetric`, rule 7), and a stability flag that
   asymmetry sets **without** causing failure.
-- **`Glyph.sigil` is `Option`** — §2.1. A sigil-less glyph driven by Repetition,
-  Billow, or Vision compiles fine.
+- **`Glyph.sigil` is `Option`** — §2.1. A sigil-less glyph driven by repetition,
+  billow, or vision compiles fine.
 - **Quality** is an `f32` derived from stroke neatness, on everything — rule 8.
 - **Compilation returns a spell _plus warnings_.** Unstable is not an error.
   Nesting activation order is canonically undecided (rule 4), so that ambiguity
@@ -442,12 +453,15 @@ atelier/
 │       │   ├── lib.rs        Point, re-exports
 │       │   ├── recognizer.rs $P point-cloud recognizer
 │       │   ├── circle.rs     ring fitting + closure detection
-│       │   ├── glyph.rs      Element, Sign, Ring, Glyph
+│       │   ├── glyph.rs      Sign, Ring, Glyph — identity, no behaviour
+│       │   ├── catalog.rs    .ron loader; the only thing knowing behaviour
+│       │   ├── arrangement.rs symmetry + region analysis over a sign set
 │       │   ├── compiler.rs   Glyph → Spell, with validation
 │       │   └── sim/          particles, fields, reactions
-│       ├── assets/
-│       │   ├── runes.ron     recorded templates
-│       │   └── rules.ron     reaction rules
+│       ├── the-magic-assets/
+│       │   ├── sigils.ron    13 sigils + capabilities
+│       │   ├── signs.ron     35 signs, three canon tiers
+│       │   └── spells.ron    13 spell fixtures + 7 edge cases
 │       └── tests/
 └── apps/
     └── canvas/           Bevy shell
