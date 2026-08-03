@@ -85,7 +85,10 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("cursor: —"),
         font.clone(),
-        TextColor(Color::srgb(0.45, 0.85, 0.75)),
+        // Darkened for the parchment background: the overlay must stay legible
+        // without competing with ink, so each line keeps its hue but drops in
+        // value until it sits quieter than a stroke.
+        TextColor(Color::srgb(0.10, 0.42, 0.36)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         // Two rows up: the ink block below it is two lines tall.
@@ -96,7 +99,7 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("ink: —"),
         font.clone(),
-        TextColor(Color::srgb(0.85, 0.70, 0.45)),
+        TextColor(Color::srgb(0.55, 0.36, 0.10)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 0.0 },
@@ -106,7 +109,7 @@ fn spawn_overlay(mut commands: Commands) {
     commands.spawn((
         Text2d::new("input: —"),
         font,
-        TextColor(Color::srgb(0.70, 0.55, 0.90)),
+        TextColor(Color::srgb(0.38, 0.24, 0.55)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 4.0 },

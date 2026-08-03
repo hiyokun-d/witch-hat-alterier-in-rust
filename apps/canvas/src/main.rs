@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::sprite::Anchor;
 use magic_core::Point;
 
 mod debug;
@@ -13,6 +14,26 @@ use shortcuts::{command_held, redo, undo};
 /// World units, and provisional — once quality scoring lands this probably
 /// belongs in core, where it can be reasoned about as part of stroke neatness.
 const MIN_POINT_SPACING: f32 = 2.0;
+
+/// Half of `DefaultPlugins`' default window, in world units. Hardcoded because
+/// the credit is spawned once at startup — resize the window and it stops
+/// tracking the corner. Fine while the window is fixed; the day it isn't, this
+/// becomes a system that reads `Window::resolution`.
+const WINDOW_HALF: Vec2 = Vec2::new(640.0, 360.0);
+
+/// Gap between the credit and the window edge.
+const CREDIT_MARGIN: f32 = 16.0;
+
+/// Aged parchment. Witches in the source draw dark on warm paper, never on
+/// white — the cream is what keeps ink from reading as harsh.
+const PAPER: Color = Color::srgb_u8(0xE8, 0xDC, 0xC4);
+
+/// Iron-gall black: as dark as the paper allows, biased brown rather than blue.
+const INK: Color = Color::srgb_u8(0x22, 0x1C, 0x18);
+
+/// The credit line. Same warm family as [`INK`], lifted toward the paper until
+/// it recedes — a signature, not something to read while drawing.
+const CREDIT: Color = Color::srgb_u8(0xA8, 0x9C, 0x88);
 
 /// Every point drawn so far, across every stroke.
 ///
@@ -35,7 +56,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         // Scaffolding. Delete this line and `mod debug;` and nothing breaks.
         .add_plugins(debug::DebugOverlayPlugin)
-        .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
+        .insert_resource(ClearColor(PAPER))
         .init_resource::<InkPad>()
         .add_systems(Startup, setup)
         // Shortcuts run after capture so an undo pressed mid-drag wins the
@@ -54,11 +75,19 @@ fn setup(mut commands: Commands) {
     commands.spawn((
         Text2d::new("This app made by HIYO"),
         TextFont {
-            font_size: FontSize::Px(18.0),
+            font_size: FontSize::Px(12.0),
             ..default()
         },
-        TextColor(Color::srgb(0.35, 0.35, 0.40)),
-        Transform::from_xyz(540.0, -332.0, 0.0),
+        TextColor(CREDIT),
+        // Anchored by its own bottom-right corner, so the transform below is
+        // where the text *ends*, not where it centres. Without this the string
+        // straddles the point and half of it hangs off the window.
+        Anchor::BOTTOM_RIGHT,
+        Transform::from_xyz(
+            WINDOW_HALF.x - CREDIT_MARGIN,
+            -WINDOW_HALF.y + CREDIT_MARGIN,
+            0.0,
+        ),
     ));
 }
 
@@ -175,10 +204,6 @@ pub fn draw_ink(mut gizmos: Gizmos, pad: Res<InkPad>) {
             continue;
         }
 
-        gizmos.line_2d(
-            Vec2::new(start.x, start.y),
-            Vec2::new(end.x, end.y),
-            Color::srgb(0.85, 0.87, 0.95),
-        )
+        gizmos.line_2d(Vec2::new(start.x, start.y), Vec2::new(end.x, end.y), INK)
     }
 }
