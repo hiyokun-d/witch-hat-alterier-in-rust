@@ -38,9 +38,13 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb(0.06, 0.07, 0.09)))
         .init_resource::<InkPad>()
         .add_systems(Startup, setup)
-        // Shortcuts run last so an undo pressed mid-drag wins the frame,
-        // rather than leaving behind the point captured a moment earlier.
-        .add_systems(Update, (capture_stroke, keyboard_shortcut).chain())
+        // Shortcuts run after capture so an undo pressed mid-drag wins the
+        // frame, rather than leaving behind the point captured a moment
+        // earlier. Drawing comes last so the pad it renders is this frame's.
+        .add_systems(
+            Update,
+            (capture_stroke, keyboard_shortcut, draw_ink).chain(),
+        )
         .run();
 }
 
@@ -153,4 +157,28 @@ pub fn cursor_world(
 ) -> Option<Vec2> {
     let cursor = window.cursor_position()?;
     camera.viewport_to_world_2d(camera_transform, cursor).ok()
+}
+
+/// Draws every stroke on the pad as a polyline.
+///
+/// Gizmos are immediate mode: nothing is spawned and nothing persists, so this
+/// redraws the whole pad from scratch each frame. That is why undo needs no
+/// cleanup — the points are gone, so the line is.
+pub fn draw_ink(mut gizmos: Gizmos, pad: Res<InkPad>) {
+    for pair in pad.points.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+
+        // Strokes sit back to back in one flat `Vec`, so consecutive points can
+        // straddle a pen lift. Without this, the end of one stroke joins the
+        // start of the next and draws a line across the canvas.
+        if start.stroke_id != end.stroke_id {
+            continue;
+        }
+
+        gizmos.line_2d(
+            Vec2::new(start.x, start.y),
+            Vec2::new(end.x, end.y),
+            Color::srgb(0.85, 0.87, 0.95),
+        )
+    }
 }
