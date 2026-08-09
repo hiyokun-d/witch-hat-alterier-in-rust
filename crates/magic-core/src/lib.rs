@@ -1,8 +1,13 @@
 pub mod arrangement;
+pub mod assembly;
 pub mod catalog;
+pub mod circle;
 pub mod glyph;
+
 pub use arrangement::{RegionArrangement, Symmetry};
+pub use assembly::{RingCandidate, RingSearch, find_rings};
 pub use catalog::{Capabilities, Catalog, CatalogError, RegionPattern, SigilId, SignId};
+pub use circle::{CircleFit, Coverage};
 pub use glyph::{Glyph, GlyphId, Ring, Sign};
 
 // The point struct that will have x, y also stroke_id for each of stroke that in the magic
@@ -23,42 +28,5 @@ impl Point {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn p(x: f32, y: f32) -> Point {
-        Point { x, y, stroke_id: 0 }
-    }
-
-    #[test]
-    fn dist_same_point_is_zero() {
-        assert_eq!(p(3.0, 7.0).dist(&p(3.0, 7.0)), 0.0);
-    }
-
-    #[test]
-    fn dist_3_4_5_triangle() {
-        assert_eq!(p(0.0, 0.0).dist(&p(3.0, 4.0)), 5.0);
-    }
-
-    #[test]
-    fn dist_is_symmetric() {
-        let a = p(1.5, -2.0);
-        let b = p(-4.0, 6.25);
-        assert_eq!(a.dist(&b), b.dist(&a));
-    }
-
-    #[test]
-    fn dist_ignores_stroke_id() {
-        let a = Point {
-            x: 0.0,
-            y: 0.0,
-            stroke_id: 0,
-        };
-        let b = Point {
-            x: 0.0,
-            y: 0.0,
-            stroke_id: 9,
-        };
-        assert_eq!(a.dist(&b), 0.0);
-    }
-}
+#[path = "tests/lib.rs"]
+mod tests;

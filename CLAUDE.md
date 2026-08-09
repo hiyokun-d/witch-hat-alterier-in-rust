@@ -428,7 +428,12 @@ He will run them hundreds of times. Keep them fast.
 
 **Categories:**
 
-- **Unit** — one function, colocated in `#[cfg(test)] mod tests`
+- **Unit** — one function. The module keeps a three-line
+  `#[cfg(test)] #[path = "tests/<module>.rs"] mod tests;` and the tests live in
+  `src/tests/<module>.rs`. Still a **child** of the module it tests, so private
+  items stay reachable — a crate-root `tests/` directory would be an
+  integration target, could only see the public API, and could not test
+  `apps/canvas` at all, since a binary crate has nothing to link against
 - **Property** — invariants that must hold for _any_ input
 - **Golden** — a recorded gesture in `tests/data/`, must recognize correctly
 - **Regression** — every bug gets a failing test before it gets a fix
@@ -477,18 +482,19 @@ atelier/
 │       │   ├── catalog.rs    .ron loader; the only thing knowing behaviour
 │       │   ├── arrangement.rs symmetry + region analysis over a sign set
 │       │   ├── compiler.rs   Glyph → Spell, with validation
-│       │   └── sim/          particles, fields, reactions
-│       ├── the-magic-assets/
-│       │   ├── sigils.ron    13 sigils + capabilities
-│       │   ├── signs.ron     35 signs, three canon tiers
-│       │   └── spells.ron    13 spell fixtures + 7 edge cases
-│       └── tests/
+│       │   ├── sim/          particles, fields, reactions
+│       │   └── tests/        one file per module above — see §5
+│       └── the-magic-assets/
+│           ├── sigils.ron    13 sigils + capabilities
+│           ├── signs.ron     35 signs, three canon tiers
+│           └── spells.ron    13 spell fixtures + 7 edge cases
 └── apps/
     └── canvas/           Bevy shell
         └── src/
             ├── main.rs      app, InkPad, capture, paper, ink
             ├── shortcuts.rs undo / redo / clear on &mut InkPad
-            └── debug.rs     on-screen overlay — Claude's, see §0
+            ├── debug.rs     on-screen overlay — Claude's, see §0
+            └── tests/       one file per module above
 ```
 
 ---
@@ -528,7 +534,7 @@ M1  Core primitives   ██████████ 5/5   ✅
 M1R Canon rework      ██████████ 7/7   ✅
 M2  Window & pen      ██████████ 5/5   ✅
 M3  Ink               ██████████ 7/7   ✅
-M4  Recognizer        ░░░░░░░░░░ 0/8   ← current
+M4  Recognizer        ██░░░░░░░░ 2/8   ← current
 M5  Compiler ring     ░░░░░░░░░░ 0/8
 M6  Elements/physics  ░░░░░░░░░░ 0/8
 M7  Reactions         ░░░░░░░░░░ 0/8
@@ -537,8 +543,52 @@ M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
 ```
 
-**Current task:** M4.1 — `circle.rs`: fit a circle to one stroke and report the
-fit error, so a ring can be told from a scribble.
+**Current task:** M4.3 — the turning number. Total signed angle swept: `±2π`
+is one loop, `~0` is a figure-eight, more than `2π` is a spiral. The third and
+last signal, and the only one that can reject a shape the other two accept.
+
+**Where M4.1 landed:**
+
+- `circle.rs` — Taubin's fit, not Kåsa's. Kåsa is biased on arcs, and arcs are
+  not an edge case here: rule 2 makes a gapped ring a legal prepared spell and
+  rule 3 splits one ring across two objects. Taubin is the same one-pass
+  moments with one number subtracted from the diagonal of the solve — `λ = 0`
+  *is* Kåsa, so the correction is the entire difference. Points are centred and
+  scaled to unit RMS radius first, which is what lets the epsilons be constants.
+- `CircleFit { center, radius, rms }` plus `quality()` — `1 − rms/r`, clamped.
+  Normalised by radius so "neat" means the same at every size, since canon has
+  larger seals stronger and never sloppier. Feeds `Ring::new`.
+- Circularity is on the **activation path**, not just the quality score: the
+  wiki's Spells page says a ring that is not circular enough gives a fleeting
+  effect or fails outright. The compiler will need to gate on `quality()`.
+- The overlay draws the fit — fitted circle, centre, ±rms band, per-point
+  whiskers at ×5, and the raw centroid in orange. The centroid drifting off
+  the centre on an arc is the Kåsa bias, visible. See §0; `debug.rs` still
+  reads and never writes.
+- Full working: `docs/m4.1-circle-fit.md`.
+
+**Where M4.2 landed:**
+
+- `fit_trimmed` — fits on the survivors, scores on everyone. A pen hook is a
+  few samples nowhere near the ring and least squares lets them drag the
+  centre, so they are dropped *for the fit*; `rms` still counts them, because
+  canon grades a seal on its mess and a score that discards the mess is a lie.
+  Bails out to the untrimmed fit when more than 30% would go — that is not a
+  circle with strays on it, that is not a circle.
+- `Coverage` — largest angular gap around the fitted circle, its heading, and
+  `gap_length` in pixels. Closure is judged in pixels because rule 3 joins two
+  halves of a seal by physical contact, and a hole is a hole at any radius.
+  `is_closed(tolerance)` takes the tolerance from the caller: core has no idea
+  how wide a pen is.
+- Closure is **state, not an event**. Nothing listens for a ring being closed;
+  every frame asks whether the gap is under threshold right now. Rule 3's
+  toggling then costs nothing — separate the halves and it opens again.
+- Known blind spot, recorded as a passing test rather than hidden: sorting by
+  angle means a figure-eight and a double loop both report full coverage. Only
+  M4.3 can reject them.
+- Overlay captions **each** ring where it sits — id, radius, quality, and
+  ARMED/CLOSED — because a pad holds several rings at once and one list in the
+  corner cannot say which is which.
 
 **Where M1R landed** — the canon rework, after the telepedia research:
 

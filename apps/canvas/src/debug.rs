@@ -13,6 +13,8 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::window::WindowFocused;
 
+use magic_core::assembly;
+
 use crate::shortcuts::TapCounter;
 use crate::{Credit, InkPad, Paper, PaperShape, cursor_world};
 
@@ -32,6 +34,61 @@ const START_MARK: Color = Color::srgb(0.10, 0.48, 0.34);
 const END_MARK: Color = Color::srgb(0.66, 0.22, 0.18);
 /// The credit's anchor point — its true corner, read from its transform.
 const ANCHOR_MARK: Color = Color::srgb(0.90, 0.70, 0.30);
+
+/// The circle `magic_core::circle::fit` found, and its centre.
+const FIT_RING: Color = Color::srgba(0.15, 0.45, 0.85, 0.90);
+/// The ±rms tolerance band around that circle.
+const FIT_BAND: Color = Color::srgba(0.15, 0.45, 0.85, 0.30);
+/// The raw centroid of the stroke — where the fitter shifts the origin to.
+///
+/// Drawn separately from the centre on purpose: on a full ring the two sit on
+/// top of each other, and on an arc they pull apart. That gap is the bias
+/// Taubin exists to correct, made visible.
+const CENTROID_MARK: Color = Color::srgb(0.85, 0.45, 0.10);
+/// Per-point miss distance, drawn as a whisker off the fitted circle.
+const DEVIATION: Color = Color::srgba(0.80, 0.20, 0.30, 0.60);
+
+/// Deviations are magnified by this much before being drawn.
+///
+/// A neat ring misses by two pixels out of three hundred, which is invisible
+/// and also the whole point. The band and the whiskers share this gain so they
+/// stay comparable, and the readout prints it so nothing here reads as literal.
+const DEVIATION_GAIN: f32 = 5.0;
+
+/// Draw a whisker every N points. Every point turns a wobbly stroke into a
+/// solid red smear that says less than a comb does.
+const WHISKER_STRIDE: usize = 3;
+
+/// Segments in a fitted circle. The default is too few — a 300px ring drawn at
+/// 32 segments reads as a polygon and looks like a bad fit when it is not.
+const FIT_RESOLUTION: u32 = 96;
+
+/// The untrimmed fit, drawn faintly behind the trimmed one.
+///
+/// Two circles rather than a count of dropped points: when they sit on top of
+/// each other the trim did nothing, and when they separate the gap between
+/// them *is* what the outlier was doing to the answer.
+const FIT_RAW: Color = Color::srgba(0.45, 0.42, 0.38, 0.55);
+/// The hole in a ring that is still open.
+const GAP_OPEN: Color = Color::srgb(0.92, 0.58, 0.12);
+/// The hole in a ring small enough to count as closed.
+const GAP_CLOSED: Color = Color::srgb(0.18, 0.62, 0.36);
+
+/// How wide a hole may be and still count as a closed ring, in pixels.
+///
+/// A preview only. The real threshold belongs to whatever builds `Ring` in
+/// M4.4 — nothing outside this file reads this. Four pen widths: wide enough
+/// to forgive the sampling step, far too narrow for a deliberate gap.
+const CLOSURE_TOLERANCE: f32 = crate::INK_WIDTH * 4.0;
+
+/// Segments used to draw the gap arc.
+const GAP_RESOLUTION: usize = 24;
+
+/// How far outside a ring its own label floats.
+const LABEL_OFFSET: f32 = 24.0;
+/// Labels are smaller than the corner readouts — there can be a dozen of them
+/// on the pad at once, and they sit on top of the drawing.
+const LABEL_SIZE: f32 = 13.0;
 
 /// Draws the live readouts. Add it, remove it, nothing else reacts.
 pub struct DebugOverlayPlugin;
@@ -126,14 +183,22 @@ impl Plugin for DebugOverlayPlugin {
                     update_layout_line,
                     update_frame_line,
                     update_stroke_line,
+                    update_fit_line,
+                    update_ring_labels,
                     draw_guides,
                     draw_stroke_ends,
+                    draw_fits,
                 )
                     .after(crate::capture_stroke)
                     // Everything above is skipped outright when hidden, rather
                     // than each system testing the flag itself.
                     .run_if(overlay_visible),
             );
+
+        // Ring labels are spawned on demand, so unlike the fixed readouts there
+        // is nothing for `toggle_overlay` to hide. They are dropped instead and
+        // rebuilt on the next visible frame.
+        app.add_systems(Update, clear_ring_labels.run_if(not(overlay_visible)));
     }
 }
 
@@ -211,6 +276,22 @@ struct FrameLine;
 #[derive(Component)]
 struct StrokeLine;
 
+/// Marks the circle-fit readout — what `magic_core::circle::fit` made of the ink.
+#[derive(Component)]
+struct FitLine;
+
+/// A caption floating beside one fitted ring, carrying its slot in the pool.
+///
+/// A seal can be several rings at once — nested (canon rule 4), linked (rule
+/// 5), or a split ring across two objects (rule 3) — so one readout at the
+/// bottom of the screen cannot say which ring is which. Each gets its own.
+///
+/// The index keeps labels stapled to the same slot between frames. Bevy query
+/// order is not guaranteed, and without it the captions would shuffle every
+/// frame.
+#[derive(Component)]
+struct RingLabel(usize);
+
 fn spawn_overlay(mut commands: Commands) {
     let font = TextFont {
         font_size: FontSize::Px(16.0),
@@ -278,12 +359,24 @@ fn spawn_overlay(mut commands: Commands) {
 
     commands.spawn((
         Text2d::new("strokes: —"),
-        font,
+        font.clone(),
         TextColor(Color::srgb(0.92, 0.62, 0.64)),
         TextLayout::justify(Justify::Left),
         Anchor::BOTTOM_LEFT,
         OverlayLine { lift: 8.0 },
         StrokeLine,
+    ));
+
+    // Above the stroke block, which is two rows tall starting at 8. Blue to
+    // match the circle the gizmos draw for it.
+    commands.spawn((
+        Text2d::new("fit: —"),
+        font,
+        TextColor(Color::srgb(0.42, 0.68, 0.96)),
+        TextLayout::justify(Justify::Left),
+        Anchor::BOTTOM_LEFT,
+        OverlayLine { lift: 10.0 },
+        FitLine,
     ));
 }
 
@@ -465,6 +558,126 @@ fn draw_stroke_ends(pad: Res<InkPad>, mut gizmos: Gizmos<DebugGizmos>) {
     }
 }
 
+/// Captions every fitted ring in place, beside the ring itself.
+///
+/// A pad can hold several rings at once and they are not interchangeable: one
+/// may be closed and firing while the one nested inside it is still armed.
+/// Reading that off a list in the corner means counting rings and hoping the
+/// order matches — so each caption sits on its own ring instead.
+///
+/// Entities are pooled by index rather than respawned. Spawning and despawning
+/// text every frame churns the archetype and makes the labels flicker.
+fn update_ring_labels(
+    mut commands: Commands,
+    pad: Res<InkPad>,
+    mut labels: Query<(Entity, &RingLabel, &mut Text2d, &mut TextColor, &mut Transform)>,
+) {
+    let rings = circle_search(&pad);
+
+    let mut pool: Vec<(Entity, usize)> = labels
+        .iter()
+        .map(|(entity, slot, ..)| (entity, slot.0))
+        .collect();
+    pool.sort_by_key(|(_, slot)| *slot);
+
+    for (entity, _) in pool.iter().skip(rings.len()) {
+        commands.entity(*entity).despawn();
+    }
+    for slot in pool.len()..rings.len() {
+        commands.spawn((
+            Text2d::new(""),
+            TextFont {
+                font_size: FontSize::Px(LABEL_SIZE),
+                ..default()
+            },
+            TextColor(GAP_OPEN),
+            TextLayout::justify(Justify::Center),
+            // Above the paper and the ink, so a caption is never buried in a
+            // dense drawing.
+            Transform::from_xyz(0.0, 0.0, 1.0),
+            RingLabel(slot),
+        ));
+    }
+
+    for (_, slot, mut text, mut color, mut transform) in &mut labels {
+        let Some(ring) = rings.get(slot.0) else {
+            continue;
+        };
+
+        let state = if ring.closed {
+            "CLOSED — would fire".to_string()
+        } else {
+            format!("ARMED — {} loose end(s)", ring.open_ends.len())
+        };
+
+        // Member strokes are printed because a ring made of several strokes is
+        // the normal case, and knowing which ones it swallowed is the whole
+        // reason a closing line no longer looks like a ring of its own.
+        text.0 = format!(
+            "{:?} · r {:.0} · q {:.2}\n{state}",
+            ring.strokes,
+            ring.fit.radius,
+            ring.fit.quality()
+        );
+        color.0 = if ring.closed { GAP_CLOSED } else { GAP_OPEN };
+
+        // An armed ring puts its caption at the widest hole, which is where
+        // the eye wants to go. A closed ring has no meaningful gap direction —
+        // its widest gap is just the sampling step and wanders frame to frame
+        // — so those sit at the top, where nested rings stack tidily.
+        let angle = if ring.closed {
+            std::f32::consts::FRAC_PI_2
+        } else {
+            ring.coverage.gap_heading
+        };
+        let out = Vec2::from_angle(angle) * (ring.fit.radius + LABEL_OFFSET);
+        transform.translation.x = ring.fit.center.x + out.x;
+        transform.translation.y = ring.fit.center.y + out.y;
+    }
+}
+
+/// Drops every ring caption while the overlay is hidden.
+fn clear_ring_labels(mut commands: Commands, labels: Query<Entity, With<RingLabel>>) {
+    for entity in &labels {
+        commands.entity(entity).despawn();
+    }
+}
+
+/// Traces the hole in a ring along the fitted circle, with a spoke at each end.
+///
+/// Amber for open, green for closed — the two states canon rule 2 turns on, so
+/// they get the strongest colour difference in the overlay. Drawn as segments
+/// rather than one arc call so the ends land exactly on the gap's edges.
+fn draw_gap(
+    gizmos: &mut Gizmos<DebugGizmos>,
+    center: Vec2,
+    radius: f32,
+    candidate: &assembly::RingCandidate,
+) {
+    // Coloured by the endpoint test, not by the angular one. A ring can span
+    // every direction and still have ends that never met.
+    let color = if candidate.closed {
+        GAP_CLOSED
+    } else {
+        GAP_OPEN
+    };
+
+    let c = &candidate.coverage;
+    let from = c.gap_heading - c.gap * 0.5;
+    let on_ring = |angle: f32| center + Vec2::from_angle(angle) * radius;
+
+    // Spokes first: on a nearly-closed ring the arc is a couple of pixels long
+    // and these are the only part still visible.
+    gizmos.line_2d(center, on_ring(from), color);
+    gizmos.line_2d(center, on_ring(from + c.gap), color);
+
+    for step in 0..GAP_RESOLUTION {
+        let a = from + c.gap * (step as f32 / GAP_RESOLUTION as f32);
+        let b = from + c.gap * ((step + 1) as f32 / GAP_RESOLUTION as f32);
+        gizmos.line_2d(on_ring(a), on_ring(b), color);
+    }
+}
+
 /// A small ✕ centred on `at`. Two lines rather than a glyph, because gizmos
 /// have no text and this has to survive any zoom.
 fn cross(gizmos: &mut Gizmos<DebugGizmos>, at: Vec2, color: Color) {
@@ -603,6 +816,175 @@ fn update_stroke_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<Strok
         pad.undone.len(),
         undone.join(" "),
     );
+}
+
+/// What the ring finder made of the pad.
+///
+/// Reports **rings**, not strokes. A ring is often several strokes — an arc
+/// plus the line that closes it, or two halves of a split seal — so a
+/// per-stroke readout would call the closing line a ring of its own and leave
+/// the ring it closed permanently open.
+fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>>) {
+    let strokes = pad
+        .points
+        .chunk_by(|a, b| a.stroke_id == b.stroke_id)
+        .count();
+    let rings = circle_search(&pad);
+
+    let (head, state) = match rings.first() {
+        Some(r) => (
+            format!(
+                "ring 1/{}   strokes {:?}   c {:.0},{:.0}   r {:.1}   rms {:.2}px   q {:.3}   trim {}   dev ×{DEVIATION_GAIN:.0}",
+                rings.len(),
+                r.strokes,
+                r.fit.center.x,
+                r.fit.center.y,
+                r.fit.radius,
+                r.fit.rms,
+                r.fit.quality(),
+                r.fit.trimmed,
+            ),
+            format!(
+                "gap {:.0}px ({:.0}°)   spanned {:.1}%   loose ends {}   {}",
+                r.coverage.gap_length,
+                r.coverage.gap.to_degrees(),
+                r.coverage.spanned * 100.0,
+                r.open_ends.len(),
+                // Rule 2: only a complete ring fires. A gap left on purpose is
+                // a prepared spell, not a mistake, so open reads as ARMED.
+                if r.closed {
+                    "CLOSED — would fire"
+                } else {
+                    "OPEN — armed"
+                },
+            ),
+        ),
+        None => (
+            "no rings — ink so far names no circle".to_string(),
+            "—".to_string(),
+        ),
+    };
+
+    let listed: Vec<String> = rings
+        .iter()
+        .take(STROKES_SHOWN)
+        .map(|r| {
+            format!(
+                "r{:.0} q{:.2} {:?} {}",
+                r.fit.radius,
+                r.fit.quality(),
+                r.strokes,
+                if r.closed { "○" } else { "◜" }
+            )
+        })
+        .collect();
+
+    line.0 = format!(
+        "{head}\n{state}\nrings {} from {strokes} strokes   [{}]",
+        rings.len(),
+        listed.join("] ["),
+    );
+}
+
+/// The pad's rings, on this frame's ink.
+///
+/// Recomputed per system rather than cached in a resource: it costs
+/// microseconds, and a cache would be a second copy of the truth that can go
+/// stale between the readout and the gizmos.
+fn circle_search(pad: &InkPad) -> Vec<assembly::RingCandidate> {
+    assembly::find_rings(
+        &pad.points,
+        &assembly::RingSearch {
+            // Ink this far off the circle still counts as on it, which is what
+            // lets a separately drawn closing line join the ring it closes.
+            on_ring: crate::INK_WIDTH * 2.5,
+            join: CLOSURE_TOLERANCE,
+            ..default()
+        },
+    )
+}
+
+/// Draws the fit itself: the circle, its centre, and where the ink misses it.
+///
+/// Every stroke gets its circle. Only the newest gets the band, the centroid
+/// mark and the whiskers — all of them at once is unreadable, and the newest
+/// stroke is the one being judged.
+///
+/// Refits on every frame rather than caching. It costs a few microseconds
+/// against a 16 700µs budget, and a cache is a second copy of the truth.
+fn draw_fits(pad: Res<InkPad>, mut gizmos: Gizmos<DebugGizmos>) {
+    let rings = circle_search(&pad);
+
+    for (index, candidate) in rings.iter().enumerate() {
+        let fit = candidate.fit;
+        let center = Vec2::new(fit.center.x, fit.center.y);
+        let at_center = Isometry2d::from_translation(center);
+
+        gizmos
+            .circle_2d(at_center, fit.radius, FIT_RING)
+            .resolution(FIT_RESOLUTION);
+
+        // Every ring shows where its widest hole is, not just the first —
+        // several rings on one pad is a normal seal, not an edge case.
+        draw_gap(&mut gizmos, center, fit.radius, candidate);
+
+        // Ends that meet nothing. These are the closure test made visible: a
+        // dot of ink on each one finishes the spell.
+        for end in &candidate.open_ends {
+            gizmos.circle_2d(
+                Isometry2d::from_translation(Vec2::new(end.x, end.y)),
+                TICK * 1.4,
+                GAP_OPEN,
+            );
+        }
+
+        if index > 0 {
+            continue;
+        }
+
+        // Detail only for the first ring. All of it at once is a smear.
+        let member: Vec<crate::Point> = pad
+            .points
+            .iter()
+            .copied()
+            .filter(|p| candidate.strokes.contains(&p.stroke_id))
+            .collect();
+
+        let spread = fit.rms * DEVIATION_GAIN;
+        gizmos
+            .circle_2d(at_center, fit.radius + spread, FIT_BAND)
+            .resolution(FIT_RESOLUTION);
+        gizmos
+            .circle_2d(at_center, (fit.radius - spread).max(0.0), FIT_BAND)
+            .resolution(FIT_RESOLUTION);
+
+        cross(&mut gizmos, center, FIT_RING);
+        gizmos.circle_2d(at_center, TICK * 0.4, FIT_RING);
+
+        // Mean of the ring's points — the origin the fitter shifts to before
+        // it does anything else. Sits on the centre for a full ring, drifts
+        // off it for an arc.
+        if !member.is_empty() {
+            let centroid = member
+                .iter()
+                .fold(Vec2::ZERO, |sum, p| sum + Vec2::new(p.x, p.y))
+                / member.len() as f32;
+            cross(&mut gizmos, centroid, CENTROID_MARK);
+        }
+
+        for p in member.iter().step_by(WHISKER_STRIDE) {
+            let at = Vec2::new(p.x, p.y);
+            let out = (at - center).normalize_or_zero();
+            if out == Vec2::ZERO {
+                continue;
+            }
+            // Anchored on the fitted circle, not on the ink, so every whisker
+            // starts from the same reference and their lengths compare.
+            let on_ring = center + out * fit.radius;
+            let miss = at.distance(center) - fit.radius;
+            gizmos.line_2d(on_ring, on_ring + out * miss * DEVIATION_GAIN, DEVIATION);
+        }
+    }
 }
 
 fn cursor_text(window: &Window, camera: &Camera, camera_transform: &GlobalTransform) -> String {
