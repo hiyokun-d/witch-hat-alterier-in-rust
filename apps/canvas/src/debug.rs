@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::window::WindowFocused;
 
-use magic_core::assembly;
+use magic_core::{assembly, circle};
 
 use crate::shortcuts::TapCounter;
 use crate::{Credit, InkPad, Paper, PaperShape, cursor_world};
@@ -570,7 +570,13 @@ fn draw_stroke_ends(pad: Res<InkPad>, mut gizmos: Gizmos<DebugGizmos>) {
 fn update_ring_labels(
     mut commands: Commands,
     pad: Res<InkPad>,
-    mut labels: Query<(Entity, &RingLabel, &mut Text2d, &mut TextColor, &mut Transform)>,
+    mut labels: Query<(
+        Entity,
+        &RingLabel,
+        &mut Text2d,
+        &mut TextColor,
+        &mut Transform,
+    )>,
 ) {
     let rings = circle_search(&pad);
 
@@ -950,6 +956,23 @@ fn draw_fits(pad: Res<InkPad>, mut gizmos: Gizmos<DebugGizmos>) {
             .filter(|p| candidate.strokes.contains(&p.stroke_id))
             .collect();
 
+        // The fit before trimming, faint. Hidden under the solid one unless an
+        // outlier was pulling it somewhere.
+        if fit.trimmed > 0
+            && let Some(raw) = circle::fit(&member)
+        {
+            gizmos
+                .circle_2d(
+                    Isometry2d::from_translation(Vec2::new(raw.center.x, raw.center.y)),
+                    raw.radius,
+                    FIT_RAW,
+                )
+                .resolution(FIT_RESOLUTION);
+        }
+
+        // The band the ink sits in on average, magnified so a good fit is still
+        // visible. Inner edge clamped: a ring messier than its own radius would
+        // otherwise ask for a negative circle.
         let spread = fit.rms * DEVIATION_GAIN;
         gizmos
             .circle_2d(at_center, fit.radius + spread, FIT_BAND)

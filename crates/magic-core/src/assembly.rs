@@ -23,8 +23,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::circle::{self, CircleFit, Coverage};
 use crate::Point;
+use crate::circle::{self, CircleFit, Coverage};
 
 /// A stroke joins a ring when at least this share of its points lie on it.
 ///
@@ -95,9 +95,7 @@ pub struct RingCandidate {
 /// position breaking ties, so the same ink always yields the same rings in the
 /// same order (§4.3).
 pub fn find_rings(points: &[Point], search: &RingSearch) -> Vec<RingCandidate> {
-    let strokes: Vec<&[Point]> = points
-        .chunk_by(|a, b| a.stroke_id == b.stroke_id)
-        .collect();
+    let strokes: Vec<&[Point]> = points.chunk_by(|a, b| a.stroke_id == b.stroke_id).collect();
 
     // A stroke can start a ring only if it curves far enough round that its
     // own fit means something. Everything else can still *join* one.
