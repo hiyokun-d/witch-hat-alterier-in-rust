@@ -3,12 +3,16 @@ pub mod assembly;
 pub mod catalog;
 pub mod circle;
 pub mod glyph;
+pub mod recognizer;
+pub mod stroke;
 
 pub use arrangement::{RegionArrangement, Symmetry};
 pub use assembly::{Activation, RingCandidate, RingContents, RingRules, RingSearch, find_rings};
 pub use catalog::{Capabilities, Catalog, CatalogError, RegionPattern, SigilId, SignId};
 pub use circle::{CircleFit, Coverage, Winding};
 pub use glyph::{Glyph, GlyphId, Ring, Sign};
+pub use recognizer::{Cloud, Match, Template, classify, cloud_distance, normalize, rank};
+pub use stroke::{path_length, resample};
 
 // The point struct that will have x, y also stroke_id for each of stroke that in the magic
 #[derive(Debug, Clone, Copy, PartialEq)]

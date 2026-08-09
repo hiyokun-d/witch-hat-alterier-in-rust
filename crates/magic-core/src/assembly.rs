@@ -31,6 +31,7 @@ use std::collections::BTreeSet;
 use crate::Point;
 use crate::circle::{self, CircleFit, Coverage, Winding};
 use crate::glyph::Ring;
+use crate::stroke;
 
 /// A stroke joins a ring when at least this share of its points lie on it.
 ///
@@ -368,18 +369,16 @@ pub fn find_rings(points: &[Point], search: &RingSearch) -> Vec<RingCandidate> {
             open_ends,
             // Per stroke, so the jump from the end of one to the start of the
             // next is not counted as ink that was never drawn.
-            ink_length: members.iter().map(|&i| drawn_length(strokes[i])).sum(),
+            ink_length: members
+                .iter()
+                .map(|&i| stroke::path_length(strokes[i]))
+                .sum(),
             points: union.len(),
             winding: circle::winding(&union, fit.center),
         });
     }
 
     rings
-}
-
-/// Length of one stroke, following it point to point.
-fn drawn_length(stroke: &[Point]) -> f32 {
-    stroke.windows(2).map(|pair| pair[0].dist(&pair[1])).sum()
 }
 
 /// Whether enough of `stroke` sits on the circle to call it part of the ring.

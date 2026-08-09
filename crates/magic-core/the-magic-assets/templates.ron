@@ -1,0 +1,44 @@
+// Recorded gestures for the recogniser: what each sigil and sign looks like.
+//
+// ── EMPTY ON PURPOSE ────────────────────────────────────────────────────────
+//
+// The shapes belong to the manga. They have to be *traced*, not invented, and
+// that has not happened yet. An empty list is an honest statement of that; a
+// plausible-looking fire sigil would not be, and §2 of CLAUDE.md is explicit
+// that an honest hole beats a plausible guess.
+//
+// `catalog.rs` already names every id this file may use — 13 sigils in
+// `sigils.ron` and 35 signs in `signs.ron`. `templates::check` refuses any id
+// that is not one of them, so a typo cannot quietly become a rune nobody can
+// draw.
+//
+// ── FORMAT ──────────────────────────────────────────────────────────────────
+//
+//   version   must be 1; bumped whenever this layout changes, because a
+//             recorded gesture is expensive to produce and a silently misread
+//             file would be costly
+//   id        a SigilId from sigils.ron, or a SignId from signs.ron
+//   kind      Sigil or Sign — they are separate namespaces and nothing stops
+//             the two sharing a name
+//   strokes   one list of (x, y) per mark of the pen. Several marks are one
+//             gesture; the recogniser never sees the boundaries between them
+//             as ink, and never sees the order they were drawn in
+//
+// Units do not matter and neither does position: normalisation divides both
+// out before anything is compared. Record at whatever size is comfortable.
+//
+// Rotation *is* kept, because canon rule 6 makes a reversed sign invert its
+// effect. Record each shape the way up it is meant to be drawn.
+//
+//   (
+//       id: "fire",
+//       kind: Sigil,
+//       strokes: [
+//           [(0.0, 0.0), (12.0, 3.0), (20.0, 15.0)],
+//           [(5.0, 10.0), (15.0, 10.0)],
+//       ],
+//   ),
+(
+    version: 1,
+    templates: [],
+)

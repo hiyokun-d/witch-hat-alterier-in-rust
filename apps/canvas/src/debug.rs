@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use bevy::window::WindowFocused;
 
-use magic_core::{assembly, circle};
+use magic_core::{assembly, circle, recognizer, stroke};
 
 use crate::shortcuts::TapCounter;
 use crate::{Credit, InkPad, Paper, PaperShape, cursor_world};
@@ -73,6 +73,23 @@ const FIT_RAW: Color = Color::srgba(0.45, 0.42, 0.38, 0.55);
 const GAP_OPEN: Color = Color::srgb(0.92, 0.58, 0.12);
 /// The hole in a ring small enough to count as closed.
 const GAP_CLOSED: Color = Color::srgb(0.18, 0.62, 0.36);
+/// Evenly spaced samples taken along the ring itself.
+const RESAMPLE_RING: Color = Color::srgba(0.20, 0.35, 0.70, 0.95);
+/// Evenly spaced samples taken along whatever the ring encloses.
+const RESAMPLE_HELD: Color = Color::srgba(0.10, 0.52, 0.44, 0.95);
+/// Radius of a resample dot.
+const SAMPLE_DOT: f32 = 2.6;
+
+/// Side of the normalised-cloud preview, in pixels.
+///
+/// The cloud itself is unitless — that is the whole point of normalising — so
+/// this number only decides how big the picture of it is.
+const PREVIEW_SIZE: f32 = 150.0;
+/// Gap between the preview and the window edges.
+const PREVIEW_MARGIN: f32 = 24.0;
+/// The preview's frame and axes.
+const PREVIEW_FRAME: Color = Color::srgba(0.55, 0.30, 0.75, 0.45);
+
 /// The reach of whatever the ring encloses — the future sigil's bubble.
 const CONTENTS_MARK: Color = Color::srgba(0.20, 0.58, 0.50, 0.75);
 /// Ink that fits a circle and covers it, and is still not a ring — a
@@ -486,6 +503,112 @@ fn inspected(rings: &[assembly::RingCandidate], cursor: Option<Vec2>) -> Option<
     })
 }
 
+/// Draws a normalised cloud in a fixed box at the top-right of the window.
+///
+/// Worth its own corner rather than being drawn over the ink. The cloud has
+/// had position and scale divided out, so it no longer belongs anywhere on the
+/// pad — showing it in place would suggest a correspondence that normalisation
+/// has just finished destroying.
+///
+/// Rotation is *not* divided out, so the picture here is turned the same way
+/// the drawing was. That is canon rule 6 on screen: a reversed sign has to look
+/// different from an upright one or it could not invert anything.
+fn draw_cloud_preview(
+    gizmos: &mut Gizmos<DebugGizmos>,
+    window: &Window,
+    cloud: &recognizer::Cloud,
+) {
+    let half = Vec2::new(window.width(), window.height()) * 0.5;
+    let center = Vec2::new(
+        half.x - PREVIEW_MARGIN - PREVIEW_SIZE * 0.5,
+        half.y - PREVIEW_MARGIN - PREVIEW_SIZE * 0.5,
+    );
+
+    gizmos.rect_2d(
+        Isometry2d::from_translation(center),
+        Vec2::splat(PREVIEW_SIZE),
+        PREVIEW_FRAME,
+    );
+    // The origin the cloud was centred on. Every cloud's points average to it.
+    cross(gizmos, center, PREVIEW_FRAME);
+
+    for p in &cloud.points {
+        gizmos.circle_2d(
+            Isometry2d::from_translation(center + Vec2::new(p.x, p.y) * PREVIEW_SIZE),
+            SAMPLE_DOT,
+            RESAMPLE_HELD,
+        );
+    }
+}
+
+/// Mean gap between samples once `ids`' strokes are evenly resampled.
+///
+/// The number `$P` cares about: two clouds can only be compared by nearest
+/// neighbour if their points are laid out at comparable density.
+fn even_spacing(points: &[crate::Point], ids: &[u32]) -> f32 {
+    let mut total = 0.0;
+    let mut counted = 0;
+
+    for run in points.chunk_by(|a, b| a.stroke_id == b.stroke_id) {
+        let Some(id) = run.first().map(|p| p.stroke_id) else {
+            continue;
+        };
+        if !ids.contains(&id) {
+            continue;
+        }
+        if stroke::resample(run, stroke::MATCH_POINTS).is_some() {
+            total += stroke::path_length(run) / (stroke::MATCH_POINTS - 1) as f32;
+            counted += 1;
+        }
+    }
+
+    if counted == 0 {
+        0.0
+    } else {
+        total / counted as f32
+    }
+}
+
+/// The points of every stroke in `ids`, in pad order.
+fn gesture(points: &[crate::Point], ids: &[u32]) -> Vec<crate::Point> {
+    points
+        .iter()
+        .copied()
+        .filter(|p| ids.contains(&p.stroke_id))
+        .collect()
+}
+
+/// Dots every stroke in `ids` at the positions `$P` will be handed.
+///
+/// Drawn from the resampler rather than from the captured points on purpose:
+/// where these sit and where the ink sits are different things, and seeing the
+/// difference is the only way to tell a resampling bug from a matching bug.
+fn draw_resampled(
+    gizmos: &mut Gizmos<DebugGizmos>,
+    points: &[crate::Point],
+    ids: &[u32],
+    color: Color,
+) {
+    for run in points.chunk_by(|a, b| a.stroke_id == b.stroke_id) {
+        let Some(id) = run.first().map(|p| p.stroke_id) else {
+            continue;
+        };
+        if !ids.contains(&id) {
+            continue;
+        }
+        let Some(even) = stroke::resample(run, stroke::MATCH_POINTS) else {
+            continue;
+        };
+        for sample in even {
+            gizmos.circle_2d(
+                Isometry2d::from_translation(Vec2::new(sample.x, sample.y)),
+                SAMPLE_DOT,
+                color,
+            );
+        }
+    }
+}
+
 /// A plain-English name for what the pen actually did.
 ///
 /// Reads the two turning numbers against coverage. `turns` is how far round
@@ -594,6 +717,8 @@ fn update_inspector(
          turning    {:.2} turns   sweep {:.2}   backtrack {:.2}   {}\n\
          closure    {}   loose ends {}\n\
          holds      inside {:?}   touching {:?}   ignored {:?}\n\
+         resample   {} pts/stroke   ring @ {:.1}px   held @ {}\n\
+         cloud      {}   rotation kept — canon rule 6\n\
          \x20          {} pts   reach {:.0}px   ×{fill:.2} of the ring   element: ?\n\
          quality    {quality:.3}  {bar}\n\
          canon      r{:.0} → strength    neat {quality:.2} → duration\n\
@@ -625,6 +750,33 @@ fn update_inspector(
         held.inside,
         held.touching,
         held.outside,
+        stroke::MATCH_POINTS,
+        even_spacing(&pad.points, &ring.strokes),
+        match held.inside.len() + held.touching.len() {
+            0 => "—".to_string(),
+            _ => {
+                let mut ids = held.inside.clone();
+                ids.extend(held.touching.iter().copied());
+                format!("{:.1}px", even_spacing(&pad.points, &ids))
+            }
+        },
+        {
+            let mut ids = held.inside.clone();
+            ids.extend(held.touching.iter().copied());
+            if ids.is_empty() {
+                ids = ring.strokes.clone();
+            }
+            match recognizer::normalize(&gesture(&pad.points, &ids), stroke::MATCH_POINTS) {
+                Some(c) => format!(
+                    "{} pts   scale {:.0}px divided out   at {:.0},{:.0}",
+                    c.points.len(),
+                    c.scale,
+                    c.origin.x,
+                    c.origin.y
+                ),
+                None => "— nothing to normalise".to_string(),
+            }
+        },
         held.points,
         held.extent,
         fit.radius,
@@ -1222,6 +1374,23 @@ fn draw_fits(
             gizmos
                 .circle_2d(at_center, held.extent, CONTENTS_MARK)
                 .resolution(FIT_RESOLUTION);
+        }
+
+        draw_resampled(&mut gizmos, &pad.points, &candidate.strokes, RESAMPLE_RING);
+        let mut held_ids = held.inside.clone();
+        held_ids.extend(held.touching.iter().copied());
+        draw_resampled(&mut gizmos, &pad.points, &held_ids, RESAMPLE_HELD);
+
+        // What the ring encloses, as the recognizer will see it. Falls back to
+        // the ring itself when nothing is inside yet, so the box is never
+        // blank while there is ink to show.
+        let subject = if held_ids.is_empty() {
+            gesture(&pad.points, &candidate.strokes)
+        } else {
+            gesture(&pad.points, &held_ids)
+        };
+        if let Some(cloud) = recognizer::normalize(&subject, stroke::MATCH_POINTS) {
+            draw_cloud_preview(&mut gizmos, &window, &cloud);
         }
 
         // Detail for the inspected ring only. All of it at once is a smear.

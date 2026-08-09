@@ -482,6 +482,7 @@ atelier/
 │       │   ├── catalog.rs    .ron loader; the only thing knowing behaviour
 │       │   ├── arrangement.rs symmetry + region analysis over a sign set
 │       │   ├── assembly.rs   strokes → rings; closure by endpoints
+│       │   ├── stroke.rs     path length + even resampling
 │       │   ├── compiler.rs   Glyph → Spell, with validation
 │       │   ├── sim/          particles, fields, reactions
 │       │   └── tests/        one file per module above — see §5
@@ -535,7 +536,7 @@ M1  Core primitives   ██████████ 5/5   ✅
 M1R Canon rework      ██████████ 7/7   ✅
 M2  Window & pen      ██████████ 5/5   ✅
 M3  Ink               ██████████ 7/7   ✅
-M4  Recognizer        █████░░░░░ 5/8   ← current
+M4  Recognizer        █████████░ 8/9   ← current
 M5  Compiler ring     ░░░░░░░░░░ 0/8
 M6  Elements/physics  ░░░░░░░░░░ 0/8
 M7  Reactions         ░░░░░░░░░░ 0/8
@@ -544,9 +545,13 @@ M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
 ```
 
-**Current task:** M4.5 — resample a stroke to evenly spaced points. `$P` needs
-it, and the fit wants it too: a hand slows at curves, points bunch there, and
-least squares over-weights the slow patch.
+M4 is nine tasks, not the eight first planned: M4.2b — assembling strokes into
+rings — was scoped as part of M4.2 and turned out to be its own piece of work.
+
+**Current task:** M4.8 — template loading and golden tests. Recorded gestures
+go in `the-magic-assets/` as data (§4.4) keyed by `SigilId`/`SignId`, and
+`tests/data/` gets golden strokes that must keep recognising correctly.
+Closing M4.8 closes the milestone.
 
 **Where M4.1 landed:**
 
@@ -663,6 +668,74 @@ stroke at a time:
 - The overlay no longer decides anything. It had been computing the verdict
   itself, which put a decision about what magic means in a shell (§4.2); now it
   calls `activation` and only chooses wording and colour.
+
+**Where M4.5 landed:**
+
+- `stroke.rs` — `path_length` and `resample`. Capture drops a point every
+  `MIN_POINT_SPACING`, which sounds even and is not: a hand slows at curves, so
+  points bunch exactly where the drawing is most interesting. That is a bias,
+  not untidiness — least squares weights by point *count*, and `$P` compares
+  clouds by nearest neighbour, which is meaningless if one is dense where the
+  other is sparse.
+- Resampling never invents shape. Every point it emits lies on a segment the
+  pen actually drew, and both ends stay exactly where they were drawn, because
+  endpoints decide ring closure (rule 2) and nudging them is not its business.
+- `MATCH_POINTS = 32`, the `$P` paper's own figure. Enough to tell gestures
+  apart while keeping the greedy match — `O(n²)` per template — inside the 1ms
+  budget across a full catalogue.
+- `assembly` dropped its private copy of the length calculation for
+  `stroke::path_length`.
+- **The fitter does not resample yet, on purpose.** It would change `rms`, and
+  so `quality`, and so canon rule 8's grading — that is a decision worth taking
+  deliberately with the overlay showing both, not smuggled in here.
+
+**Where M4.6 landed:**
+
+- `recognizer.rs` — `Cloud` and `normalize`. Of the three transforms `$P` can
+  divide out, two are exactly what §2.2 asks for and the third would be a bug:
+  - **position** removed, **scale** removed — "a sigil's size and location
+    within a seal do not change its behaviour";
+  - **rotation kept.** Most `$P` implementations turn a cloud to a canonical
+    angle. Doing that here would delete canon rule 6 outright — a reversed sign
+    inverts its effect, so orientation is meaning, not noise. §5's ±15°
+    tolerance comes free instead, because a slightly turned cloud is simply a
+    nearby cloud.
+- Scaling is **uniform**, by the longer side of the bounding box. Fitting each
+  axis to a square separately, as `$1` does for unistrokes, would make a circle
+  and an ellipse the same drawing.
+- `Cloud` keeps the `scale` and `origin` it divided out. The recognizer must
+  not see them and the compiler must — the wiki ties intensity to sigil size
+  relative to the ring, and this is the step that would otherwise lose it.
+- `stroke::resample` and `path_length` became gesture-aware: segments spanning
+  two stroke ids are skipped, so a three-mark sigil resamples as one gesture
+  without inventing ink across the gaps between marks.
+
+**Where M4.7 landed** — the greedy match, and the only real speed budget:
+
+- `cloud_distance`, `rank`, `classify`, `Template`, `Match`. The distance is
+  the weighted **mean** rather than the paper's weighted sum: the sum grows
+  with `n`, so it cannot be read without knowing the sample count, while the
+  mean is a fraction of the gesture's own size. Dividing by a constant leaves
+  every ranking untouched.
+- `classify` is deliberately unthresholded. How close is close enough is a
+  question about magic — a sloppy sigil that is still obviously fire should
+  probably work — and it belongs to whoever compiles a spell.
+- **Scaling moved off the bounding box.** A box is not rotation-invariant:
+  turning a square twelve degrees grows its box by a fifth, so dividing by the
+  box shrinks the drawing inside it and a small turn changes size as well as
+  angle. Most `$P` users never notice because they normalise rotation away
+  first; we deliberately do not, and it cost a rotated square its match. RMS
+  distance from the centroid has no preference for the axes, so §5's ±15°
+  tolerance survives. Same quantity already conditions the circle fitter.
+- **The budget was real.** 48 templates at `n = 32` — the catalogue's true size
+  — measured 0.87ms against §7's 1ms. Two exact changes brought it to 0.41ms:
+  searching on squared distances so each step costs one square root instead of
+  `n`, and abandoning a walk once it cannot beat the best already found. The
+  bound tightens across directions and starts, so `rank` benefits too. Neither
+  changes an answer.
+- The measurement was taken with a throwaway test and then deleted: §4.1 says
+  core has no clock, and a timing assertion in a debug build measures nothing
+  anyway. A real bench belongs in `benches/` when §7 gets one.
 
 - `RingContents::extent` is the one number that must be captured here or lost:
   the wiki ties a spell's intensity to "the size of a sigil in relation to the
