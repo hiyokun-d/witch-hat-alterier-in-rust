@@ -535,7 +535,7 @@ M1  Core primitives   ██████████ 5/5   ✅
 M1R Canon rework      ██████████ 7/7   ✅
 M2  Window & pen      ██████████ 5/5   ✅
 M3  Ink               ██████████ 7/7   ✅
-M4  Recognizer        ███░░░░░░░ 3/8   ← current
+M4  Recognizer        █████░░░░░ 5/8   ← current
 M5  Compiler ring     ░░░░░░░░░░ 0/8
 M6  Elements/physics  ░░░░░░░░░░ 0/8
 M7  Reactions         ░░░░░░░░░░ 0/8
@@ -544,12 +544,9 @@ M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
 ```
 
-**Current task:** M4.3 — the turning number. Total signed angle swept: `±2π`
-is one loop, `~0` is a figure-eight, more than `2π` is a spiral. The third and
-last signal, and the only one that can reject a shape the other two accept —
-`assembly::tests::two_halves_that_do_not_touch_stay_open` and
-`circle::tests::fit_accepts_a_figure_eight…` both record shapes still getting
-through.
+**Current task:** M4.5 — resample a stroke to evenly spaced points. `$P` needs
+it, and the fit wants it too: a hand slows at curves, points bunch there, and
+least squares over-weights the slow patch.
 
 **Where M4.1 landed:**
 
@@ -623,6 +620,54 @@ stroke at a time:
 - The overlay's inspector panel names the one number canon does not give us:
   `MIN_QUALITY_TO_FIRE`. Invented, marked as such, and parked in `debug.rs`
   rather than core until the compiler needs a real answer.
+
+**Where M4.3 landed** — the third signal, and the one that rejects:
+
+- `circle::winding` returns `turns` and `sweep`. `turns` is how far round the
+  ink went, summed **per stroke** so the leap from one stroke to the next is
+  never mistaken for pen travel, and taken as a magnitude per stroke so a split
+  seal inked in opposite directions still totals one turn. `sweep` counts
+  travel in both directions, so `backtrack = sweep − turns` is zero for a pen
+  that only went one way.
+- `RingCandidate::is_simple` compares `turns` against `coverage.spanned`
+  rather than against `1.0`. For **any** simple arc the two agree, which is
+  what keeps rule 2's prepared spell legal — a ring with a deliberate hole is
+  not a full turn and must not be rejected for it. A double loop covers one
+  turn and winds two; a figure-eight covers one turn and nets nothing.
+- Both blind spots recorded in M4.1 and M4.2 are now closed, and the old tests
+  stay as-is: they document what each signal *cannot* see, which is why there
+  are three of them.
+- `RingCandidate::contents` sorts the rest of the pad by canon rule 1 —
+  `inside`, `touching` (the *connecting to* clause, and how rule 5 links two
+  glyphs), `outside` (does not count). Identity only; what the enclosed ink
+  *means* is the recognizer's job.
+**Where M4.4 landed** — the ring leaves the overlay:
+
+- **The threshold question had one right answer: units.** Anything measured in
+  pixels is a fact about this screen and this pen, so it comes from the shell —
+  `CLOSURE_TOLERANCE`, `ON_RING_TOLERANCE`, and the rest of `RingSearch`.
+  Anything dimensionless is a statement about magic and belongs to core, so
+  `simple_tolerance` and `min_quality` moved into `RingRules`. A ratio means
+  the same thing on every screen; a pixel does not.
+- `RingCandidate::activation` returns `Malformed | Armed | Fleeting | Active`,
+  and the order it asks in is the point. Being a ring at all comes first,
+  because "closed" and "neat" are meaningless questions about a figure-eight.
+  Then structure before craft: an open ring is *armed* however roughly it was
+  inked, because rule 2 makes an unfinished seal a prepared spell rather than a
+  bad one. `Fleeting` is the wiki's own word for a ring too rough to hold.
+- `RingCandidate::to_ring` compiles the measurement into the `Ring` the engine
+  uses. The candidate keeps the evidence — strokes, turning, loose ends — and
+  `Ring` keeps only what a spell needs, so a later warning can point back at
+  the measurement behind it. A malformed candidate still converts: §4.7 has
+  core reporting rather than deciding.
+- The overlay no longer decides anything. It had been computing the verdict
+  itself, which put a decision about what magic means in a shell (§4.2); now it
+  calls `activation` and only chooses wording and colour.
+
+- `RingContents::extent` is the one number that must be captured here or lost:
+  the wiki ties a spell's intensity to "the size of a sigil in relation to the
+  ring", and §3.1 has the recognizer scoring sigils on shape alone with scale
+  deliberately thrown away. Nothing downstream could recover it.
 
 **Where M1R landed** — the canon rework, after the telepedia research:
 

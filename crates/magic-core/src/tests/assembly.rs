@@ -286,3 +286,331 @@ fn points_counts_every_member_stroke() {
     let rings = find_rings(&ink, &search());
     assert_eq!(rings[0].points, 177);
 }
+
+#[test]
+fn a_plain_ring_is_simple() {
+    let rings = find_rings(&ring(0, 0.0, 0.0, 120.0, 200), &search());
+    assert!(rings[0].is_simple(0.08));
+    assert!((rings[0].winding.turns - 1.0).abs() < 0.03);
+}
+
+/// Canon rule 2's prepared spell must stay legal. This is why `is_simple`
+/// compares turning against coverage instead of against a full turn.
+#[test]
+fn a_ring_with_a_deliberate_gap_is_still_simple() {
+    let rings = find_rings(&arc(0, 0.0, 0.0, 120.0, 0.0, 300.0, 150), &search());
+
+    assert!(!rings[0].closed, "it is open, as intended");
+    assert!(rings[0].is_simple(0.08), "but it is still one clean arc");
+    assert!((rings[0].winding.turns - 0.83).abs() < 0.05);
+}
+
+/// The blind spot `coverage_is_fooled_by_a_double_loop` records. Turning sees
+/// straight through it.
+#[test]
+fn winding_catches_the_double_loop_coverage_misses() {
+    let rings = find_rings(&arc(0, 0.0, 0.0, 100.0, 0.0, 720.0, 400), &search());
+
+    assert!(rings[0].coverage.spans_full_turn(20.0), "still fooled");
+    assert!((rings[0].winding.turns - 2.0).abs() < 0.06);
+    assert!(
+        !rings[0].is_simple(0.08),
+        "two turns over one turn of coverage"
+    );
+}
+
+#[test]
+fn winding_catches_a_figure_eight() {
+    let ink: Vec<Point> = (0..200)
+        .map(|i| {
+            let t = (i as f32 / 200.0) * TAU;
+            Point {
+                x: 90.0 * t.sin(),
+                y: 45.0 * (2.0 * t).sin(),
+                stroke_id: 0,
+            }
+        })
+        .collect();
+
+    for candidate in find_rings(&ink, &search()) {
+        assert!(
+            !candidate.is_simple(0.08),
+            "a figure-eight is not one clean loop"
+        );
+    }
+}
+
+/// A split seal inked in opposite directions is perfectly ordinary. The two
+/// strokes must not cancel each other out.
+#[test]
+fn two_halves_drawn_opposite_ways_are_still_simple() {
+    let mut ink = arc(0, 0.0, 0.0, 100.0, 0.0, 180.0, 90);
+    ink.extend(
+        arc(1, 0.0, 0.0, 100.0, 180.0, 360.0, 90)
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>(),
+    );
+
+    let rings = find_rings(&ink, &search());
+    assert_eq!(rings.len(), 1);
+    assert!(rings[0].closed);
+    assert!(rings[0].is_simple(0.08));
+}
+
+/// A short scratch standing in for a sigil, `n` points around `(cx, cy)`.
+fn blob(id: u32, cx: f32, cy: f32, size: f32, n: usize) -> Vec<Point> {
+    (0..n)
+        .map(|i| {
+            let a = (i as f32 / n as f32) * TAU;
+            Point {
+                x: cx + size * a.cos(),
+                y: cy + size * (2.0 * a).sin(),
+                stroke_id: id,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn a_sigil_inside_the_ring_is_listed_as_contents() {
+    let mut ink = ring(0, 0.0, 0.0, 150.0, 200);
+    ink.extend(blob(1, 0.0, 0.0, 30.0, 40));
+
+    let rings = find_rings(&ink, &search());
+    let held = rings[0].contents(&ink, 12.0);
+
+    assert_eq!(held.inside, vec![1]);
+    assert!(held.touching.is_empty());
+    assert!(held.outside.is_empty());
+    assert_eq!(held.points, 40);
+}
+
+/// The ring's own strokes are the ring, not its contents.
+#[test]
+fn a_rings_own_strokes_are_not_its_contents() {
+    let mut ink = arc(0, 0.0, 0.0, 120.0, 0.0, 320.0, 160);
+    ink.extend(arc(1, 0.0, 0.0, 120.0, 318.0, 362.0, 17));
+
+    let rings = find_rings(&ink, &search());
+    let held = rings[0].contents(&ink, 12.0);
+
+    assert_eq!(rings[0].strokes, vec![0, 1]);
+    assert!(held.inside.is_empty());
+    assert!(held.touching.is_empty());
+    assert_eq!(held.points, 0);
+}
+
+/// Rule 1's *connecting to* clause. A stroke crossing the ring counts toward
+/// the spell even though it is not within it — and this is how rule 5 links
+/// two glyphs with a line.
+#[test]
+fn a_stroke_crossing_the_ring_counts_as_touching() {
+    let mut ink = ring(0, 0.0, 0.0, 100.0, 150);
+    // A line from well inside to well outside.
+    ink.extend((0..30).map(|i| Point {
+        x: 20.0 + i as f32 * 6.0,
+        y: 0.0,
+        stroke_id: 1,
+    }));
+
+    let rings = find_rings(&ink, &search());
+    let held = rings[0].contents(&ink, 12.0);
+
+    assert_eq!(held.touching, vec![1]);
+    assert!(held.inside.is_empty());
+}
+
+/// Rule 1 again: ink outside the ring does not count toward the spell.
+#[test]
+fn ink_outside_the_ring_does_not_count() {
+    let mut ink = ring(0, 0.0, 0.0, 100.0, 150);
+    ink.extend(blob(1, 500.0, 500.0, 20.0, 30));
+
+    let rings = find_rings(&ink, &search());
+    let held = rings[0].contents(&ink, 12.0);
+
+    assert_eq!(held.outside, vec![1]);
+    assert_eq!(held.points, 0, "outside ink contributes nothing");
+    assert_eq!(held.extent, 0.0);
+}
+
+/// The number the wiki ties to a spell's intensity, recorded before the
+/// recognizer throws scale away.
+#[test]
+fn extent_tracks_the_size_of_the_contents_against_the_ring() {
+    let outer = ring(0, 0.0, 0.0, 200.0, 200);
+
+    let small = {
+        let mut ink = outer.clone();
+        ink.extend(blob(1, 0.0, 0.0, 20.0, 40));
+        let rings = find_rings(&ink, &search());
+        rings[0].contents(&ink, 12.0).extent / rings[0].fit.radius
+    };
+    let large = {
+        let mut ink = outer.clone();
+        ink.extend(blob(1, 0.0, 0.0, 120.0, 40));
+        let rings = find_rings(&ink, &search());
+        rings[0].contents(&ink, 12.0).extent / rings[0].fit.radius
+    };
+
+    assert!(small < 0.2, "small sigil filled {small}");
+    assert!(large > 0.5, "large sigil filled {large}");
+}
+
+/// Canon rule 4 — the inner ring of a nested seal is contents of the outer.
+#[test]
+fn a_nested_ring_shows_up_in_the_outer_rings_contents() {
+    let mut ink = ring(0, 0.0, 0.0, 60.0, 120);
+    ink.extend(ring(1, 0.0, 0.0, 180.0, 200));
+
+    let rings = find_rings(&ink, &search());
+    let outer = rings.iter().find(|r| r.fit.radius > 100.0).unwrap();
+    let inner = rings.iter().find(|r| r.fit.radius < 100.0).unwrap();
+
+    assert_eq!(outer.contents(&ink, 12.0).inside, inner.strokes);
+    assert!(inner.contents(&ink, 12.0).inside.is_empty());
+    assert_eq!(inner.contents(&ink, 12.0).outside, outer.strokes);
+}
+
+/// A ring drawn badly enough to fall below `min_quality`, but still closed.
+fn rough_ring(id: u32, r: f32, wobble: f32, n: usize) -> Vec<Point> {
+    let mut points: Vec<Point> = (0..n)
+        .map(|i| {
+            let a = (i as f32 / (n - 1) as f32) * TAU;
+            let push = if i % 2 == 0 {
+                1.0 + wobble
+            } else {
+                1.0 - wobble
+            };
+            Point {
+                x: r * push * a.cos(),
+                y: r * push * a.sin(),
+                stroke_id: id,
+            }
+        })
+        .collect();
+
+    // The wobble alternates, so with an even `n` the last point lands on the
+    // opposite side of the wobble from the first and the ends miss each other
+    // by twice the amplitude. The drawing is meant to be rough, not open.
+    if let Some(first) = points.first().copied() {
+        *points.last_mut().unwrap() = first;
+    }
+    points
+}
+
+#[test]
+fn a_neat_closed_ring_is_active() {
+    let ink = ring(0, 0.0, 0.0, 120.0, 200);
+    let rings = find_rings(&ink, &search());
+    assert_eq!(
+        rings[0].activation(&RingRules::default()),
+        Activation::Active
+    );
+}
+
+/// Canon rule 2. A gap is a prepared spell, and armed is not a failure state.
+#[test]
+fn a_ring_with_a_gap_is_armed_not_broken() {
+    let ink = arc(0, 0.0, 0.0, 120.0, 0.0, 300.0, 150);
+    let rings = find_rings(&ink, &search());
+    assert_eq!(
+        rings[0].activation(&RingRules::default()),
+        Activation::Armed
+    );
+}
+
+/// The wiki's second gate: closed, but not circular enough to hold.
+#[test]
+fn a_rough_closed_ring_is_only_fleeting() {
+    let ink = rough_ring(0, 120.0, 0.09, 200);
+    let rings = find_rings(&ink, &search());
+
+    assert!(rings[0].closed, "it is finished, just badly");
+    assert!(rings[0].fit.quality() < 0.95);
+    assert_eq!(
+        rings[0].activation(&RingRules::default()),
+        Activation::Fleeting
+    );
+}
+
+/// Neatness is not asked about until the ring is finished — an unfinished
+/// seal is armed however roughly it was inked.
+#[test]
+fn structure_is_judged_before_craft() {
+    let ink = rough_ring(0, 120.0, 0.09, 200)
+        .into_iter()
+        .take(160)
+        .collect::<Vec<_>>();
+    let rings = find_rings(&ink, &search());
+
+    assert!(rings[0].fit.quality() < 0.95, "rough");
+    assert!(!rings[0].closed, "and unfinished");
+    assert_eq!(
+        rings[0].activation(&RingRules::default()),
+        Activation::Armed
+    );
+}
+
+/// Closed and neat are meaningless questions about a shape that never went
+/// round, so being a ring at all is asked first.
+#[test]
+fn a_figure_eight_is_malformed_whatever_else_it_is() {
+    let ink: Vec<Point> = (0..200)
+        .map(|i| {
+            let t = (i as f32 / 200.0) * TAU;
+            Point {
+                x: 90.0 * t.sin(),
+                y: 45.0 * (2.0 * t).sin(),
+                stroke_id: 0,
+            }
+        })
+        .collect();
+
+    for candidate in find_rings(&ink, &search()) {
+        assert_eq!(
+            candidate.activation(&RingRules::default()),
+            Activation::Malformed
+        );
+    }
+}
+
+#[test]
+fn to_ring_carries_the_measurements_across() {
+    let ink = ring(0, 40.0, -25.0, 130.0, 200);
+    let rings = find_rings(&ink, &search());
+    let ring = rings[0].to_ring();
+
+    assert_eq!(ring.center(), rings[0].fit.center);
+    assert_eq!(ring.radius(), rings[0].fit.radius);
+    assert_eq!(ring.is_closed(), rings[0].closed);
+    assert_eq!(ring.quality(), rings[0].fit.quality());
+}
+
+/// A ring drawn open compiles to an open `Ring`, not to nothing. Rule 2 needs
+/// the unfired spell to exist.
+#[test]
+fn an_armed_candidate_still_compiles_to_a_ring() {
+    let ink = arc(0, 0.0, 0.0, 120.0, 0.0, 300.0, 150);
+    let ring = find_rings(&ink, &search())[0].to_ring();
+    assert!(!ring.is_closed());
+    assert!(ring.radius() > 100.0);
+}
+
+/// Rule 1's containment test has to agree with the assembly that produced it,
+/// or ink judged inside here would fall outside once compiled.
+#[test]
+fn the_compiled_ring_contains_what_assembly_said_it_held() {
+    let mut ink = ring(0, 0.0, 0.0, 150.0, 200);
+    ink.extend(blob(1, 0.0, 0.0, 30.0, 40));
+
+    let rings = find_rings(&ink, &search());
+    let held = rings[0].contents(&ink, 12.0);
+    let compiled = rings[0].to_ring();
+
+    assert_eq!(held.inside, vec![1]);
+    for p in ink.iter().filter(|p| held.inside.contains(&p.stroke_id)) {
+        assert!(compiled.contains(*p, 0.0), "{p:?} fell outside the ring");
+    }
+}

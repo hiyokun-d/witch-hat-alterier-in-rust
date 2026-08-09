@@ -14,6 +14,11 @@
 //! every other stroke whose ink lies on that circle. Drawing order is not an
 //! input, and no stroke is ever rejected for arriving early.
 //!
+//! A ring found here is *reported*, never rejected: a double loop and a
+//! figure-eight both come back as candidates with the numbers that give them
+//! away ([`RingCandidate::is_simple`]). Deciding what to do about that belongs
+//! to the compiler, not to a search.
+//!
 //! **Closure is decided by endpoints, not by angle.** Angular coverage cannot
 //! see the difference between a ring whose ends meet and two arcs that overlap
 //! in angle without touching — both look like a full turn from the centre.
@@ -24,7 +29,8 @@
 use std::collections::BTreeSet;
 
 use crate::Point;
-use crate::circle::{self, CircleFit, Coverage};
+use crate::circle::{self, CircleFit, Coverage, Winding};
+use crate::glyph::Ring;
 
 /// A stroke joins a ring when at least this share of its points lie on it.
 ///
@@ -91,6 +97,202 @@ pub struct RingCandidate {
     pub ink_length: f32,
     /// How many points make up the ring.
     pub points: usize,
+    /// How far the ink travels around the circle. The third signal.
+    pub winding: Winding,
+}
+
+impl RingCandidate {
+    /// Whether the ink goes round once and no further.
+    ///
+    /// Compares turning against direction coverage, because for **any** simple
+    /// arc the two agree — half a ring turns half a turn and covers half the
+    /// directions. What they catch is everything else:
+    ///
+    /// | Shape | `spanned` | `turns` |
+    /// | --- | --- | --- |
+    /// | ring | 1.0 | 1.0 |
+    /// | ring with a gap | 0.9 | 0.9 |
+    /// | ring drawn twice | 1.0 | 2.0 |
+    /// | figure-eight | 1.0 | ~0 |
+    ///
+    /// Comparing against coverage rather than against `1.0` is what keeps
+    /// canon rule 2's prepared spell legal: a ring with a deliberate hole is
+    /// not a full turn and must not be rejected for it.
+    ///
+    /// `tolerance` is in turns. A hand needs a few percent.
+    pub fn is_simple(&self, tolerance: f32) -> bool {
+        (self.winding.turns - self.coverage.spanned).abs() <= tolerance
+            && self.winding.backtrack() <= tolerance
+    }
+
+    /// Whether this ring closes the circuit.
+    ///
+    /// Order matters. Being a ring at all is asked first, because "closed" and
+    /// "neat" are meaningless questions about a figure-eight. Then structure
+    /// before craft: an open ring is *armed*, and how neatly it was drawn does
+    /// not come into it until it is finished.
+    pub fn activation(&self, rules: &RingRules) -> Activation {
+        if !self.is_simple(rules.simple_tolerance) {
+            return Activation::Malformed;
+        }
+        if !self.closed {
+            return Activation::Armed;
+        }
+        if self.fit.quality() < rules.min_quality {
+            return Activation::Fleeting;
+        }
+        Activation::Active
+    }
+
+    /// Compiles this candidate into the [`Ring`] the rest of the engine uses.
+    ///
+    /// The candidate keeps the evidence — every stroke, the turning numbers,
+    /// where the loose ends are. `Ring` keeps only what a spell needs: where,
+    /// how big, whether the circuit is closed, and how well it was drawn. The
+    /// two exist separately so that a compiler warning can point back at the
+    /// measurement it came from.
+    ///
+    /// A [`Activation::Malformed`] candidate still converts. Refusing here
+    /// would leave the caller with no way to say *why* something failed, and
+    /// §4.7 has core reporting rather than deciding.
+    pub fn to_ring(&self) -> Ring {
+        Ring::new(
+            self.fit.center,
+            self.fit.radius,
+            self.closed,
+            self.fit.quality(),
+        )
+    }
+}
+
+/// What a ring must satisfy to close a spell's circuit.
+///
+/// Every value here is **dimensionless**, and that is the whole reason this
+/// type exists rather than a pile of constants in the shell. A ratio means the
+/// same thing on any screen at any zoom, so it is a statement about magic and
+/// belongs in core (§4.2). Anything measured in pixels — how near two ends
+/// must be to touch, how wide the pen is — is the shell's business and arrives
+/// through [`RingSearch`] instead.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RingRules {
+    /// How far turning may stray from coverage and still read as one clean
+    /// loop, in turns. See [`RingCandidate::is_simple`].
+    pub simple_tolerance: f32,
+    /// Least neatness a closed ring needs before it holds rather than fizzles.
+    ///
+    /// **Invented.** The wiki says a spell "will have a fleeting effect or may
+    /// even fail to activate completely if the ring is not circular enough"
+    /// and gives no number. This is ours, and it is the only value in this
+    /// file canon does not back.
+    pub min_quality: f32,
+}
+
+impl Default for RingRules {
+    fn default() -> Self {
+        RingRules {
+            // A hand tracing a ring lands within a couple of percent; the
+            // shapes this rejects are out by a whole turn.
+            simple_tolerance: 0.08,
+            min_quality: 0.95,
+        }
+    }
+}
+
+/// Whether a ring closes the circuit, and if not, why not.
+///
+/// Canon puts two gates on the ring, and they are not the same gate. Rule 2 is
+/// structural — a spell fires only once its ring is complete. The Spells page
+/// adds a second, about craft: a ring that is not circular enough gives a
+/// fleeting effect or fails outright. A seal can pass either and fail the
+/// other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
+    /// Not a ring at all — the ink fits a circle without going round it once.
+    Malformed,
+    /// Complete, and neat enough to hold. The circuit is closed.
+    Active,
+    /// A ring with a gap. **Not a mistake** — canon rule 2's prepared spell,
+    /// waiting on its last stroke, and rule 3's split seal before contact.
+    Armed,
+    /// Closed, but too rough to hold. The wiki's own word for it.
+    Fleeting,
+}
+
+/// What a ring encloses, sorted by canon rule 1.
+///
+/// Rule 1: every sigil and sign must be drawn inside the ring or touching it;
+/// anything else does not count toward the spell. Note the *touching* clause —
+/// a stroke that meets the ring is part of the seal even though it is not
+/// within it, which is also how rule 5 links two glyphs with a line.
+///
+/// Identity only. What the enclosed ink *means* — which sigil, which sign — is
+/// the recognizer's job (M4.5 onward); this says nothing about it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RingContents {
+    /// Strokes lying wholly within the ring.
+    pub inside: Vec<u32>,
+    /// Strokes that cross or meet the ring. Count toward the spell.
+    pub touching: Vec<u32>,
+    /// Strokes wholly outside. Do not count — rule 1.
+    pub outside: Vec<u32>,
+    /// How many points the enclosed ink holds, touching strokes included.
+    pub points: usize,
+    /// How far the enclosed ink reaches from the ring's centre.
+    ///
+    /// Against the ring's own radius this is the ratio the wiki says sets a
+    /// spell's intensity: "the size of a sigil in relation to the ring
+    /// determines the intensity and strength of the spell's effect". Recorded
+    /// now because it is unrecoverable later — the recognizer scores sigils on
+    /// shape alone and deliberately never sees scale (§3.1).
+    pub extent: f32,
+}
+
+impl RingCandidate {
+    /// Sorts every stroke on the pad by where it sits relative to this ring.
+    ///
+    /// The ring's own strokes are excluded — they are the ring, not its
+    /// contents. `tolerance` is the same slack used to decide a stroke lies on
+    /// the ring, and belongs to the caller for the usual reason: core does not
+    /// know how wide a pen is.
+    pub fn contents(&self, points: &[Point], tolerance: f32) -> RingContents {
+        let mut found = RingContents::default();
+        let mut extent: f32 = 0.0;
+
+        for stroke in points.chunk_by(|a, b| a.stroke_id == b.stroke_id) {
+            let Some(id) = stroke.first().map(|p| p.stroke_id) else {
+                continue;
+            };
+            if self.strokes.contains(&id) {
+                continue;
+            }
+
+            let inner = self.fit.radius - tolerance;
+            let outer = self.fit.radius + tolerance;
+            let mut nearest = f32::INFINITY;
+            let mut furthest: f32 = 0.0;
+            for p in stroke {
+                let d = p.dist(&self.fit.center);
+                nearest = nearest.min(d);
+                furthest = furthest.max(d);
+            }
+
+            if furthest <= inner {
+                found.inside.push(id);
+            } else if nearest >= outer {
+                // Rule 1: does not count toward the spell.
+                found.outside.push(id);
+                continue;
+            } else {
+                found.touching.push(id);
+            }
+
+            found.points += stroke.len();
+            extent = extent.max(furthest);
+        }
+
+        found.extent = extent;
+        found
+    }
 }
 
 /// Finds every ring in `points`.
@@ -168,6 +370,7 @@ pub fn find_rings(points: &[Point], search: &RingSearch) -> Vec<RingCandidate> {
             // next is not counted as ink that was never drawn.
             ink_length: members.iter().map(|&i| drawn_length(strokes[i])).sum(),
             points: union.len(),
+            winding: circle::winding(&union, fit.center),
         });
     }
 

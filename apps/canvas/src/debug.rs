@@ -73,13 +73,36 @@ const FIT_RAW: Color = Color::srgba(0.45, 0.42, 0.38, 0.55);
 const GAP_OPEN: Color = Color::srgb(0.92, 0.58, 0.12);
 /// The hole in a ring small enough to count as closed.
 const GAP_CLOSED: Color = Color::srgb(0.18, 0.62, 0.36);
+/// The reach of whatever the ring encloses — the future sigil's bubble.
+const CONTENTS_MARK: Color = Color::srgba(0.20, 0.58, 0.50, 0.75);
+/// Ink that fits a circle and covers it, and is still not a ring — a
+/// figure-eight, a double loop, a stroke that doubles back.
+const NOT_A_RING: Color = Color::srgb(0.72, 0.16, 0.22);
+/// Closed, but too rough to hold.
+const GAP_FLEETING: Color = Color::srgb(0.62, 0.52, 0.14);
+
+/// One colour per activation state, so the captions, the gap arcs and the
+/// panel can never disagree about what they are showing.
+fn activation_color(state: assembly::Activation) -> Color {
+    match state {
+        assembly::Activation::Malformed => NOT_A_RING,
+        assembly::Activation::Armed => GAP_OPEN,
+        assembly::Activation::Fleeting => GAP_FLEETING,
+        assembly::Activation::Active => GAP_CLOSED,
+    }
+}
 
 /// How wide a hole may be and still count as a closed ring, in pixels.
 ///
-/// A preview only. The real threshold belongs to whatever builds `Ring` in
-/// M4.4 — nothing outside this file reads this. Four pen widths: wide enough
-/// to forgive the sampling step, far too narrow for a deliberate gap.
+/// Stays in the shell on purpose. Distances in pixels are a fact about this
+/// screen and this pen, and core has no business knowing either — the split is
+/// that ratios live in `RingRules` and lengths come from here (§4.2). Four pen
+/// widths: wide enough to forgive the sampling step, far too narrow for a
+/// deliberate gap.
 const CLOSURE_TOLERANCE: f32 = crate::INK_WIDTH * 4.0;
+
+/// How far ink may sit off a circle and still count as lying on it.
+const ON_RING_TOLERANCE: f32 = crate::INK_WIDTH * 2.5;
 
 /// Segments used to draw the gap arc.
 const GAP_RESOLUTION: usize = 24;
@@ -89,13 +112,15 @@ const INSPECT_MARK: Color = Color::srgba(0.55, 0.30, 0.75, 0.85);
 /// How near a ring's edge the cursor must come to inspect it.
 const INSPECT_REACH: f32 = 60.0;
 
-/// Below this neatness a closed ring is taken to fizzle rather than fire.
+/// What core says a ring must satisfy to close a circuit.
 ///
-/// **Invented.** The wiki says a spell "will have a fleeting effect or may even
-/// fail to activate completely if the ring is not circular enough" and gives no
-/// number, so this one is ours and lives here rather than in core until the
-/// compiler needs a real answer.
-const MIN_QUALITY_TO_FIRE: f32 = 0.95;
+/// Every number in here is a ratio, which is why it is core's to hold: a ratio
+/// means the same on any screen. `min_quality` is the one value canon does not
+/// give us — see `RingRules`.
+const RULES: assembly::RingRules = assembly::RingRules {
+    simple_tolerance: 0.08,
+    min_quality: 0.95,
+};
 
 /// Cells in the quality bar.
 const QUALITY_CELLS: usize = 10;
@@ -461,6 +486,36 @@ fn inspected(rings: &[assembly::RingCandidate], cursor: Option<Vec2>) -> Option<
     })
 }
 
+/// A plain-English name for what the pen actually did.
+///
+/// Reads the two turning numbers against coverage. `turns` is how far round
+/// the ink went; `spanned` is how much of the circle it reached. For any
+/// simple arc those agree — the ways they can disagree are the shapes that
+/// pass a fit and a coverage test while being nothing like a ring.
+fn shape_of(ring: &assembly::RingCandidate) -> &'static str {
+    let w = ring.winding;
+    let spanned = ring.coverage.spanned;
+
+    if ring.is_simple(RULES.simple_tolerance) {
+        return if spanned > 0.98 {
+            "one clean loop"
+        } else {
+            "one clean arc"
+        };
+    }
+    if w.backtrack() > 0.25 && w.turns < 0.35 {
+        // Travelled a long way and came back with nothing to show for it.
+        return "figure-eight — lobes cancel";
+    }
+    if w.turns > spanned + 0.5 {
+        return "drawn round more than once";
+    }
+    if w.backtrack() > RULES.simple_tolerance {
+        return "doubles back on itself";
+    }
+    "tangled"
+}
+
 /// Everything known about one ring, in full.
 ///
 /// The corner readout is a summary across every ring; this is one ring in
@@ -508,12 +563,25 @@ fn update_inspector(
 
     // Canon rule 2 gates on closure, and the Spells page gates on circularity
     // as well — a ring that is not round enough fizzles rather than fires.
-    let verdict = if !ring.closed {
-        format!("ARMED — {} end(s) to join", ring.open_ends.len())
-    } else if quality < MIN_QUALITY_TO_FIRE {
-        format!("FIZZLES — not circular enough (needs q {MIN_QUALITY_TO_FIRE:.2})")
+    let held = ring.contents(&pad.points, ON_RING_TOLERANCE);
+    let fill = if fit.radius > 0.0 {
+        held.extent / fit.radius
     } else {
-        "WOULD FIRE".to_string()
+        0.0
+    };
+
+    // The verdict is core's call, not the overlay's — deciding what magic
+    // means is never a shell's job (§4.2). All the shell adds is wording.
+    let verdict = match ring.activation(&RULES) {
+        assembly::Activation::Malformed => format!("NOT A RING — {}", shape_of(ring)),
+        assembly::Activation::Armed => {
+            format!("ARMED — {} end(s) to join", ring.open_ends.len())
+        }
+        assembly::Activation::Fleeting => format!(
+            "FLEETING — not circular enough (needs q {:.2})",
+            RULES.min_quality
+        ),
+        assembly::Activation::Active => "ACTIVE — circuit closed".to_string(),
     };
 
     panel.0 = format!(
@@ -523,7 +591,10 @@ fn update_inspector(
          ink        {} stroke(s)   {} pts   drawn {:.0}px   ×{:.2} of the ring\n\
          fit        rms {:.2}px   worst {:.2}px   trimmed {}   centroid off {centroid_off:.1}px\n\
          coverage   spanned {:.1}%   gap {:.0}px / {:.0}°   facing {:.0}°\n\
+         turning    {:.2} turns   sweep {:.2}   backtrack {:.2}   {}\n\
          closure    {}   loose ends {}\n\
+         holds      inside {:?}   touching {:?}   ignored {:?}\n\
+         \x20          {} pts   reach {:.0}px   ×{fill:.2} of the ring   element: ?\n\
          quality    {quality:.3}  {bar}\n\
          canon      r{:.0} → strength    neat {quality:.2} → duration\n\
          verdict    {verdict}",
@@ -545,8 +616,17 @@ fn update_inspector(
         ring.coverage.gap_length,
         ring.coverage.gap.to_degrees(),
         ring.coverage.gap_heading.to_degrees(),
+        ring.winding.turns,
+        ring.winding.sweep,
+        ring.winding.backtrack(),
+        shape_of(ring),
         if ring.closed { "CLOSED" } else { "OPEN" },
         ring.open_ends.len(),
+        held.inside,
+        held.touching,
+        held.outside,
+        held.points,
+        held.extent,
         fit.radius,
     );
 }
@@ -781,10 +861,14 @@ fn update_ring_labels(
             continue;
         };
 
-        let state = if ring.closed {
-            "CLOSED — would fire".to_string()
-        } else {
-            format!("ARMED — {} loose end(s)", ring.open_ends.len())
+        let activation = ring.activation(&RULES);
+        let state = match activation {
+            assembly::Activation::Malformed => shape_of(ring).to_string(),
+            assembly::Activation::Armed => {
+                format!("ARMED — {} loose end(s)", ring.open_ends.len())
+            }
+            assembly::Activation::Fleeting => "FLEETING — too rough".to_string(),
+            assembly::Activation::Active => "ACTIVE — circuit closed".to_string(),
         };
 
         // Member strokes are printed because a ring made of several strokes is
@@ -796,7 +880,7 @@ fn update_ring_labels(
             ring.fit.radius,
             ring.fit.quality()
         );
-        color.0 = if ring.closed { GAP_CLOSED } else { GAP_OPEN };
+        color.0 = activation_color(activation);
 
         // An armed ring puts its caption at the widest hole, which is where
         // the eye wants to go. A closed ring has no meaningful gap direction —
@@ -831,13 +915,9 @@ fn draw_gap(
     radius: f32,
     candidate: &assembly::RingCandidate,
 ) {
-    // Coloured by the endpoint test, not by the angular one. A ring can span
-    // every direction and still have ends that never met.
-    let color = if candidate.closed {
-        GAP_CLOSED
-    } else {
-        GAP_OPEN
-    };
+    // Coloured by activation, so the arc says the same thing as the caption
+    // beside it and the panel above it.
+    let color = activation_color(candidate.activation(&RULES));
 
     let c = &candidate.coverage;
     let from = c.gap_heading - c.gap * 0.5;
@@ -1022,17 +1102,19 @@ fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>
                 r.fit.trimmed,
             ),
             format!(
-                "gap {:.0}px ({:.0}°)   spanned {:.1}%   loose ends {}   {}",
+                "gap {:.0}px ({:.0}°)   spanned {:.1}%   turns {:.2}   loose ends {}   {}",
                 r.coverage.gap_length,
                 r.coverage.gap.to_degrees(),
                 r.coverage.spanned * 100.0,
+                r.winding.turns,
                 r.open_ends.len(),
                 // Rule 2: only a complete ring fires. A gap left on purpose is
                 // a prepared spell, not a mistake, so open reads as ARMED.
-                if r.closed {
-                    "CLOSED — would fire"
-                } else {
-                    "OPEN — armed"
+                match r.activation(&RULES) {
+                    assembly::Activation::Malformed => "NOT A RING",
+                    assembly::Activation::Armed => "ARMED",
+                    assembly::Activation::Fleeting => "FLEETING",
+                    assembly::Activation::Active => "ACTIVE",
                 },
             ),
         ),
@@ -1074,7 +1156,7 @@ fn circle_search(pad: &InkPad) -> Vec<assembly::RingCandidate> {
         &assembly::RingSearch {
             // Ink this far off the circle still counts as on it, which is what
             // lets a separately drawn closing line join the ring it closes.
-            on_ring: crate::INK_WIDTH * 2.5,
+            on_ring: ON_RING_TOLERANCE,
             join: CLOSURE_TOLERANCE,
             ..default()
         },
@@ -1131,6 +1213,16 @@ fn draw_fits(
         gizmos
             .circle_2d(at_center, fit.radius + LABEL_OFFSET * 0.4, INSPECT_MARK)
             .resolution(FIT_RESOLUTION);
+
+        // How far the enclosed ink reaches. Against the ring this is the
+        // ratio the wiki ties to a spell's intensity, so it is worth seeing
+        // rather than reading.
+        let held = candidate.contents(&pad.points, ON_RING_TOLERANCE);
+        if held.extent > 0.0 {
+            gizmos
+                .circle_2d(at_center, held.extent, CONTENTS_MARK)
+                .resolution(FIT_RESOLUTION);
+        }
 
         // Detail for the inspected ring only. All of it at once is a smear.
         let member: Vec<crate::Point> = pad

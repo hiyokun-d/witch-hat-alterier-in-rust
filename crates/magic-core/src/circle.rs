@@ -497,6 +497,81 @@ fn misses(points: &[Point], center: Point, radius: f32) -> (f32, f32) {
     ((sum / points.len() as f32).sqrt(), worst)
 }
 
+/// How far the ink actually travels around a circle.
+///
+/// The third signal, and the only one that can reject a shape the other two
+/// accept. Fit error says the ink sits on a circle; coverage says it reaches
+/// every direction. Neither notices a pen that went round twice, or one that
+/// went round one way and came back the other — both sit perfectly on a circle
+/// and both cover every direction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Winding {
+    /// Times round the centre, counting each stroke's own net travel.
+    ///
+    /// A full ring is `1.0`, half a ring `0.5`, a ring drawn twice `2.0`. Each
+    /// stroke's contribution is taken as a magnitude before being added, so
+    /// two halves of a split seal still total one turn when they happen to be
+    /// drawn in opposite directions — canon has no opinion about which way
+    /// round a seal is inked.
+    pub turns: f32,
+    /// Total angular travel, counting motion in both directions.
+    ///
+    /// Equal to [`Winding::turns`] for a pen that only ever went one way.
+    /// Larger when it doubled back.
+    pub sweep: f32,
+}
+
+impl Winding {
+    /// How much of the travel went backwards, in turns. Zero for a clean loop.
+    pub fn backtrack(&self) -> f32 {
+        (self.sweep - self.turns).max(0.0)
+    }
+}
+
+/// Measures how far the ink travels around `center`.
+///
+/// Angles are accumulated **per stroke**, so the leap from the end of one
+/// stroke to the start of the next is never mistaken for pen travel. Because
+/// the strokes are then added as magnitudes, the result does not depend on the
+/// order they were drawn in or the direction each was drawn (§3.3).
+///
+/// Assumes consecutive points in a stroke are less than half a turn apart as
+/// seen from `center`, which capture guarantees: a step wider than that is
+/// indistinguishable from the same step taken the short way round.
+pub fn winding(points: &[Point], center: Point) -> Winding {
+    let mut turns = 0.0;
+    let mut sweep = 0.0;
+
+    for stroke in points.chunk_by(|a, b| a.stroke_id == b.stroke_id) {
+        let mut net = 0.0;
+        let mut gross = 0.0;
+
+        for pair in stroke.windows(2) {
+            let from = (pair[0].y - center.y).atan2(pair[0].x - center.x);
+            let to = (pair[1].y - center.y).atan2(pair[1].x - center.x);
+
+            // Shortest way round, in `(-π, π]`. Going via sin/cos rather than
+            // adding or subtracting `TAU` by hand, which needs a case for each
+            // direction and gets one of them wrong.
+            let step = to - from;
+            let step = step.sin().atan2(step.cos());
+
+            net += step;
+            gross += step.abs();
+        }
+
+        // Magnitude per stroke: direction is the pen's business, not the
+        // spell's.
+        turns += net.abs();
+        sweep += gross;
+    }
+
+    Winding {
+        turns: turns / TAU,
+        sweep: sweep / TAU,
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/circle.rs"]
 mod tests;

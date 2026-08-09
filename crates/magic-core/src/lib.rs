@@ -5,9 +5,9 @@ pub mod circle;
 pub mod glyph;
 
 pub use arrangement::{RegionArrangement, Symmetry};
-pub use assembly::{RingCandidate, RingSearch, find_rings};
+pub use assembly::{Activation, RingCandidate, RingContents, RingRules, RingSearch, find_rings};
 pub use catalog::{Capabilities, Catalog, CatalogError, RegionPattern, SigilId, SignId};
-pub use circle::{CircleFit, Coverage};
+pub use circle::{CircleFit, Coverage, Winding};
 pub use glyph::{Glyph, GlyphId, Ring, Sign};
 
 // The point struct that will have x, y also stroke_id for each of stroke that in the magic

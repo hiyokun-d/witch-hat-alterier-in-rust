@@ -503,3 +503,117 @@ fn one_dent_and_an_even_wobble_differ_in_max_miss_not_rms() {
         b.max_miss
     );
 }
+
+#[test]
+fn a_full_ring_winds_once() {
+    let points = circle(0.0, 0.0, 100.0, 200);
+    let f = fit(&points).unwrap();
+    let w = winding(&points, f.center);
+
+    assert!(close(w.turns, 1.0, 0.02), "turns {}", w.turns);
+    assert!(w.backtrack() < 0.02, "backtrack {}", w.backtrack());
+}
+
+#[test]
+fn half_a_ring_winds_half_a_turn() {
+    let points = arc(0.0, 0.0, 100.0, 0.0, 180.0, 100);
+    let f = fit(&points).unwrap();
+    assert!(close(winding(&points, f.center).turns, 0.5, 0.02));
+}
+
+/// The blind spot coverage has. Every direction is covered, so `spanned` reads
+/// `1.0` — but the pen went round twice and the turning number says so.
+#[test]
+fn a_double_loop_winds_twice() {
+    let points = arc(0.0, 0.0, 100.0, 0.0, 720.0, 400);
+    let f = fit(&points).unwrap();
+    let w = winding(&points, f.center);
+
+    assert!(close(w.turns, 2.0, 0.05), "turns {}", w.turns);
+    assert!(w.backtrack() < 0.05, "a double loop never doubles back");
+}
+
+/// The other blind spot. A figure-eight nets nothing — the lobes cancel — but
+/// the pen still travelled, so `sweep` is large and `backtrack` catches it.
+#[test]
+fn a_figure_eight_nets_nothing_but_travels_far() {
+    let points: Vec<Point> = (0..200)
+        .map(|i| {
+            let t = (i as f32 / 200.0) * TAU;
+            Point {
+                x: 80.0 * t.sin(),
+                y: 40.0 * (2.0 * t).sin(),
+                stroke_id: 0,
+            }
+        })
+        .collect();
+    let f = fit(&points).unwrap();
+    let w = winding(&points, f.center);
+
+    assert!(w.turns < 0.3, "the lobes should cancel, turns {}", w.turns);
+    assert!(
+        w.sweep > 1.0,
+        "the pen still went a long way, sweep {}",
+        w.sweep
+    );
+    assert!(w.backtrack() > 0.7, "backtrack {}", w.backtrack());
+}
+
+/// Canon has no opinion about which way round a seal is inked.
+#[test]
+fn winding_ignores_which_way_the_pen_went() {
+    let forward = circle(0.0, 0.0, 90.0, 150);
+    let backward: Vec<Point> = forward.iter().rev().copied().collect();
+
+    let f = fit(&forward).unwrap();
+    let a = winding(&forward, f.center);
+    let b = winding(&backward, f.center);
+
+    assert!(close(a.turns, b.turns, 1e-3));
+    assert!(close(a.sweep, b.sweep, 1e-3));
+}
+
+/// Strokes are summed as magnitudes, so two halves inked in opposite
+/// directions still total one turn instead of cancelling out.
+#[test]
+fn two_halves_drawn_opposite_ways_still_total_one_turn() {
+    let mut points = arc(0.0, 0.0, 100.0, 0.0, 180.0, 80);
+    // Second half, drawn the other way round.
+    let mut back: Vec<Point> = arc(0.0, 0.0, 100.0, 180.0, 360.0, 80)
+        .into_iter()
+        .rev()
+        .map(|p| Point { stroke_id: 1, ..p })
+        .collect();
+    points.append(&mut back);
+
+    let f = fit(&points).unwrap();
+    assert!(close(winding(&points, f.center).turns, 1.0, 0.03));
+}
+
+/// The jump from the end of one stroke to the start of the next is not pen
+/// travel and must not be counted as turning.
+#[test]
+fn the_leap_between_strokes_is_not_counted_as_turning() {
+    let mut points = arc(0.0, 0.0, 100.0, 0.0, 90.0, 40);
+    points.extend(
+        arc(0.0, 0.0, 100.0, 270.0, 360.0, 40)
+            .into_iter()
+            .map(|p| Point { stroke_id: 1, ..p }),
+    );
+
+    let f = fit(&points).unwrap();
+    let w = winding(&points, f.center);
+    // Two quarter turns, and nothing for the 180° hop between them.
+    assert!(close(w.turns, 0.5, 0.03), "turns {}", w.turns);
+}
+
+#[test]
+fn winding_of_too_few_points_is_zero() {
+    let center = Point {
+        x: 0.0,
+        y: 0.0,
+        stroke_id: 0,
+    };
+    assert_eq!(winding(&[], center).turns, 0.0);
+    assert_eq!(winding(&circle(0.0, 0.0, 10.0, 8)[..1], center).sweep, 0.0);
+}
