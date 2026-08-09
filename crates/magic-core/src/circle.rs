@@ -76,6 +76,12 @@ pub struct CircleFit {
     /// Those points still count toward [`CircleFit::rms`] — they are dropped to
     /// find an honest centre, never to flatter the score.
     pub trimmed: usize,
+    /// The worst single miss, in pixels.
+    ///
+    /// [`CircleFit::rms`] alone cannot tell a uniform wobble from one clean
+    /// circle with a dent in it — same average, very different drawing. Canon
+    /// grades a seal on its neatness, so the difference is worth keeping.
+    pub max_miss: f32,
 }
 
 impl CircleFit {
@@ -164,11 +170,13 @@ pub fn fit(points: &[Point]) -> Option<CircleFit> {
         return None;
     }
 
+    let (rms, max_miss) = misses(points, center, radius);
     Some(CircleFit {
         center,
         radius,
-        rms: rms(points, center, radius),
+        rms,
         trimmed: 0,
+        max_miss,
     })
 }
 
@@ -216,9 +224,11 @@ pub fn fit_trimmed(points: &[Point]) -> Option<CircleFit> {
         return Some(rough);
     };
 
+    // Every point, survivors and outliers alike.
+    let (rms, max_miss) = misses(points, refined.center, refined.radius);
     Some(CircleFit {
-        // Every point, survivors and outliers alike.
-        rms: rms(points, refined.center, refined.radius),
+        rms,
+        max_miss,
         trimmed: dropped,
         ..refined
     })
@@ -466,7 +476,8 @@ fn taubin_root(m: &Moments) -> Option<f32> {
     lambda.is_finite().then_some(lambda)
 }
 
-/// Root-mean-square distance of the ink from the fitted circle, in pixels.
+/// The RMS and the worst-case distance of the ink from the fitted circle, in
+/// pixels, in one pass.
 ///
 /// Deliberately infallible: by the time this runs the centre and radius are
 /// already known good, and a function that cannot fail should not claim it
@@ -475,13 +486,15 @@ fn taubin_root(m: &Moments) -> Option<f32> {
 /// Measured on the raw points. Once trimming arrives in M4.2 it will apply to
 /// the *fit* only — outliers are dropped to find an honest centre, then scored
 /// anyway, because the mess is the thing canon grades.
-fn rms(points: &[Point], center: Point, radius: f32) -> f32 {
+fn misses(points: &[Point], center: Point, radius: f32) -> (f32, f32) {
     let mut sum = 0.0;
+    let mut worst: f32 = 0.0;
     for p in points {
         let miss = p.dist(&center) - radius;
         sum += miss * miss;
+        worst = worst.max(miss.abs());
     }
-    (sum / points.len() as f32).sqrt()
+    ((sum / points.len() as f32).sqrt(), worst)
 }
 
 #[cfg(test)]

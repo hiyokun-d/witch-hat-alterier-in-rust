@@ -481,6 +481,7 @@ atelier/
 │       │   ├── glyph.rs      Sign, Ring, Glyph — identity, no behaviour
 │       │   ├── catalog.rs    .ron loader; the only thing knowing behaviour
 │       │   ├── arrangement.rs symmetry + region analysis over a sign set
+│       │   ├── assembly.rs   strokes → rings; closure by endpoints
 │       │   ├── compiler.rs   Glyph → Spell, with validation
 │       │   ├── sim/          particles, fields, reactions
 │       │   └── tests/        one file per module above — see §5
@@ -534,7 +535,7 @@ M1  Core primitives   ██████████ 5/5   ✅
 M1R Canon rework      ██████████ 7/7   ✅
 M2  Window & pen      ██████████ 5/5   ✅
 M3  Ink               ██████████ 7/7   ✅
-M4  Recognizer        ██░░░░░░░░ 2/8   ← current
+M4  Recognizer        ███░░░░░░░ 3/8   ← current
 M5  Compiler ring     ░░░░░░░░░░ 0/8
 M6  Elements/physics  ░░░░░░░░░░ 0/8
 M7  Reactions         ░░░░░░░░░░ 0/8
@@ -545,7 +546,10 @@ M10 AR & polish       ░░░░░░░░░░ 0/7
 
 **Current task:** M4.3 — the turning number. Total signed angle swept: `±2π`
 is one loop, `~0` is a figure-eight, more than `2π` is a spiral. The third and
-last signal, and the only one that can reject a shape the other two accept.
+last signal, and the only one that can reject a shape the other two accept —
+`assembly::tests::two_halves_that_do_not_touch_stay_open` and
+`circle::tests::fit_accepts_a_figure_eight…` both record shapes still getting
+through.
 
 **Where M4.1 landed:**
 
@@ -578,17 +582,47 @@ last signal, and the only one that can reject a shape the other two accept.
 - `Coverage` — largest angular gap around the fitted circle, its heading, and
   `gap_length` in pixels. Closure is judged in pixels because rule 3 joins two
   halves of a seal by physical contact, and a hole is a hole at any radius.
-  `is_closed(tolerance)` takes the tolerance from the caller: core has no idea
-  how wide a pen is.
+  `Coverage::spans_full_turn(tolerance)` takes the tolerance from the caller:
+  core has no idea how wide a pen is. It is **not** the closure test — see
+  M4.2b below for why that was wrong.
 - Closure is **state, not an event**. Nothing listens for a ring being closed;
   every frame asks whether the gap is under threshold right now. Rule 3's
   toggling then costs nothing — separate the halves and it opens again.
 - Known blind spot, recorded as a passing test rather than hidden: sorting by
   angle means a figure-eight and a double loop both report full coverage. Only
   M4.3 can reject them.
-- Overlay captions **each** ring where it sits — id, radius, quality, and
-  ARMED/CLOSED — because a pad holds several rings at once and one list in the
-  corner cannot say which is which.
+- Overlay captions **each** ring where it sits — member strokes, radius,
+  quality, and ARMED/CLOSED — because a pad holds several rings at once and one
+  list in the corner cannot say which is which.
+
+**Where M4.2b landed** — two bugs the overlay made obvious, both from asking a
+stroke at a time:
+
+- `assembly.rs`, `find_rings` — **a ring is not a stroke.** An arc plus the
+  short line that closes it is one ring; per-stroke fitting made the line a
+  ring of its own with a nonsense radius (a 6%-of-a-turn arc fits any circle
+  you like) and left the ring it closed open forever. Grouping is now a query
+  over the whole pad, per §3.3: strokes that curve far enough to name a circle
+  seed a ring, then every stroke whose ink lies on that circle joins it. Order
+  is not an input; a stroke belonging to no ring is absent from the result
+  rather than wrong.
+- **Closure is decided by endpoints, not by angle.** Angular coverage cannot
+  tell a ring whose ends meet from two arcs that overlap in angle without
+  touching — from the centre both cover every direction, so the overlay called
+  an obviously broken ring closed. Canon is physical about it: the glowstone
+  halves complete a spell when they *touch*. A ring is closed when every loose
+  end has another end within `join`, and `RingCandidate::open_ends` says
+  exactly where a dot of ink would finish it.
+- Coverage is still the second signal — a ring can be joined up and still have
+  a bite out of it — but it answers `spans_full_turn`, not `is_closed`.
+- Metadata the overlay needed and the compiler will want: `CircleFit.max_miss`
+  (one dent versus an even wobble — same `rms`, different drawing) and
+  `RingCandidate.ink_length` / `.points`. Ink length over circumference says
+  how much of the ring was drawn, and over `1.0`, how much was drawn twice — a
+  rough stand-in for the turning number until M4.3.
+- The overlay's inspector panel names the one number canon does not give us:
+  `MIN_QUALITY_TO_FIRE`. Invented, marked as such, and parked in `debug.rs`
+  rather than core until the compiler needs a real answer.
 
 **Where M1R landed** — the canon rework, after the telepedia research:
 

@@ -461,3 +461,45 @@ fn fit_accepts_a_figure_eight_because_rejecting_it_is_not_its_job() {
         .collect();
     assert!(fit(&eight).is_some());
 }
+
+#[test]
+fn max_miss_is_zero_for_a_perfect_circle() {
+    let f = fit(&circle(0.0, 0.0, 70.0, 96)).unwrap();
+    assert!(f.max_miss < 0.02, "max_miss was {}", f.max_miss);
+}
+
+/// The pair exists to separate a uniform wobble from one clean ring with a
+/// dent. Same `rms`, very different `max_miss`.
+#[test]
+fn one_dent_and_an_even_wobble_differ_in_max_miss_not_rms() {
+    let dented = {
+        let mut points = circle(0.0, 0.0, 100.0, 60);
+        // A single point pulled 12px inward.
+        points[30].x *= 0.88;
+        points[30].y *= 0.88;
+        points
+    };
+    let wobbly: Vec<Point> = circle(0.0, 0.0, 100.0, 60)
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let push = if i % 2 == 0 { 1.0155 } else { 0.9845 };
+            Point {
+                x: p.x * push,
+                y: p.y * push,
+                stroke_id: 0,
+            }
+        })
+        .collect();
+
+    let a = fit(&dented).unwrap();
+    let b = fit(&wobbly).unwrap();
+
+    assert!(close(a.rms, b.rms, 0.35), "{} vs {}", a.rms, b.rms);
+    assert!(
+        a.max_miss > b.max_miss * 3.0,
+        "a dent should stand out: {} vs {}",
+        a.max_miss,
+        b.max_miss
+    );
+}

@@ -83,6 +83,14 @@ pub struct RingCandidate {
     /// Empty exactly when [`RingCandidate::closed`]. Worth having as positions
     /// rather than a count: this is where a dot of ink would finish the spell.
     pub open_ends: Vec<Point>,
+    /// Total length of ink laid down, following the strokes point to point.
+    ///
+    /// Against the circle's own circumference this says how much of the ring
+    /// was actually drawn, and — over `1.0` — how much was drawn twice. A
+    /// rough stand-in for the turning number until M4.3 computes it properly.
+    pub ink_length: f32,
+    /// How many points make up the ring.
+    pub points: usize,
 }
 
 /// Finds every ring in `points`.
@@ -156,10 +164,19 @@ pub fn find_rings(points: &[Point], search: &RingSearch) -> Vec<RingCandidate> {
             strokes: members.iter().map(|&i| strokes[i][0].stroke_id).collect(),
             closed: open_ends.is_empty(),
             open_ends,
+            // Per stroke, so the jump from the end of one to the start of the
+            // next is not counted as ink that was never drawn.
+            ink_length: members.iter().map(|&i| drawn_length(strokes[i])).sum(),
+            points: union.len(),
         });
     }
 
     rings
+}
+
+/// Length of one stroke, following it point to point.
+fn drawn_length(stroke: &[Point]) -> f32 {
+    stroke.windows(2).map(|pair| pair[0].dist(&pair[1])).sum()
 }
 
 /// Whether enough of `stroke` sits on the circle to call it part of the ring.

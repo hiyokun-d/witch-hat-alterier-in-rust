@@ -84,6 +84,22 @@ const CLOSURE_TOLERANCE: f32 = crate::INK_WIDTH * 4.0;
 /// Segments used to draw the gap arc.
 const GAP_RESOLUTION: usize = 24;
 
+/// The ring being inspected, highlighted so the panel and the pad agree.
+const INSPECT_MARK: Color = Color::srgba(0.55, 0.30, 0.75, 0.85);
+/// How near a ring's edge the cursor must come to inspect it.
+const INSPECT_REACH: f32 = 60.0;
+
+/// Below this neatness a closed ring is taken to fizzle rather than fire.
+///
+/// **Invented.** The wiki says a spell "will have a fleeting effect or may even
+/// fail to activate completely if the ring is not circular enough" and gives no
+/// number, so this one is ours and lives here rather than in core until the
+/// compiler needs a real answer.
+const MIN_QUALITY_TO_FIRE: f32 = 0.95;
+
+/// Cells in the quality bar.
+const QUALITY_CELLS: usize = 10;
+
 /// How far outside a ring its own label floats.
 const LABEL_OFFSET: f32 = 24.0;
 /// Labels are smaller than the corner readouts — there can be a dozen of them
@@ -185,6 +201,8 @@ impl Plugin for DebugOverlayPlugin {
                     update_stroke_line,
                     update_fit_line,
                     update_ring_labels,
+                    place_inspector,
+                    update_inspector,
                     draw_guides,
                     draw_stroke_ends,
                     draw_fits,
@@ -214,6 +232,12 @@ fn overlay_visible(visible: Res<OverlayVisible>) -> bool {
     visible.0
 }
 
+/// Every piece of text the overlay owns.
+///
+/// The inspector is pinned by its own system rather than the `lift` stack, so
+/// it carries no [`OverlayLine`] and has to be named separately.
+type AnyReadout = Or<(With<OverlayLine>, With<InspectorLine>)>;
+
 /// F1 shows and hides everything this file draws.
 ///
 /// The text entities get their `Visibility` flipped; the gizmos stop because
@@ -222,7 +246,7 @@ fn overlay_visible(visible: Res<OverlayVisible>) -> bool {
 fn toggle_overlay(
     keys: Res<ButtonInput<KeyCode>>,
     mut visible: ResMut<OverlayVisible>,
-    mut lines: Query<&mut Visibility, With<OverlayLine>>,
+    mut lines: Query<&mut Visibility, AnyReadout>,
 ) {
     if !keys.just_pressed(KeyCode::F1) {
         return;
@@ -279,6 +303,10 @@ struct StrokeLine;
 /// Marks the circle-fit readout — what `magic_core::circle::fit` made of the ink.
 #[derive(Component)]
 struct FitLine;
+
+/// Marks the full-detail panel for one ring, pinned to the top-left.
+#[derive(Component)]
+struct InspectorLine;
 
 /// A caption floating beside one fitted ring, carrying its slot in the pool.
 ///
@@ -378,6 +406,149 @@ fn spawn_overlay(mut commands: Commands) {
         OverlayLine { lift: 10.0 },
         FitLine,
     ));
+
+    // Its own corner, not the bottom-left stack. The panel is a dozen rows and
+    // would push everything else off the pad.
+    commands.spawn((
+        Text2d::new(""),
+        TextFont {
+            font_size: FontSize::Px(14.0),
+            ..default()
+        },
+        TextColor(Color::srgb(0.62, 0.55, 0.86)),
+        TextLayout::justify(Justify::Left),
+        Anchor::TOP_LEFT,
+        InspectorLine,
+    ));
+}
+
+/// Pins the inspector to the top-left corner.
+fn place_inspector(
+    window: Single<&Window>,
+    mut panel: Single<&mut Transform, With<InspectorLine>>,
+) {
+    let half = Vec2::new(window.width(), window.height()) * 0.5;
+    panel.translation.x = -half.x + MARGIN;
+    panel.translation.y = half.y - MARGIN;
+}
+
+/// Which ring the cursor is inspecting: the one whose edge it is nearest.
+///
+/// Falls back to the first ring so the panel is never blank while there is
+/// something to say. Returns the slot and whether the cursor picked it.
+fn inspected(rings: &[assembly::RingCandidate], cursor: Option<Vec2>) -> Option<(usize, bool)> {
+    if rings.is_empty() {
+        return None;
+    }
+
+    let hovered = cursor.and_then(|at| {
+        rings
+            .iter()
+            .enumerate()
+            .map(|(slot, ring)| {
+                let center = Vec2::new(ring.fit.center.x, ring.fit.center.y);
+                (slot, (at.distance(center) - ring.fit.radius).abs())
+            })
+            .filter(|(_, off)| *off <= INSPECT_REACH)
+            // `total_cmp` keeps the pick deterministic when two rings overlap.
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(slot, _)| slot)
+    });
+
+    Some(match hovered {
+        Some(slot) => (slot, true),
+        None => (0, false),
+    })
+}
+
+/// Everything known about one ring, in full.
+///
+/// The corner readout is a summary across every ring; this is one ring in
+/// depth. Hover a ring's edge to switch to it.
+fn update_inspector(
+    pad: Res<InkPad>,
+    window: Single<&Window>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+    mut panel: Single<&mut Text2d, With<InspectorLine>>,
+) {
+    let rings = circle_search(&pad);
+    let (camera, camera_transform) = *camera;
+    let cursor = cursor_world(&window, camera, camera_transform);
+
+    let Some((slot, by_hover)) = inspected(&rings, cursor) else {
+        panel.0 = "── no ring ──\ndraw a loop".to_string();
+        return;
+    };
+
+    let ring = &rings[slot];
+    let fit = ring.fit;
+    let quality = fit.quality();
+    let circumference = std::f32::consts::TAU * fit.radius;
+
+    // Where the fitter shifts its origin to. On a full ring it sits on the
+    // centre; on an arc it slides toward the ink, and that offset is the bias
+    // Taubin corrects for.
+    let member: Vec<Vec2> = pad
+        .points
+        .iter()
+        .filter(|p| ring.strokes.contains(&p.stroke_id))
+        .map(|p| Vec2::new(p.x, p.y))
+        .collect();
+    let centroid_off = if member.is_empty() {
+        0.0
+    } else {
+        let centroid = member.iter().fold(Vec2::ZERO, |sum, p| sum + *p) / member.len() as f32;
+        centroid.distance(Vec2::new(fit.center.x, fit.center.y))
+    };
+
+    let filled = (quality * QUALITY_CELLS as f32).round() as usize;
+    let bar: String = (0..QUALITY_CELLS)
+        .map(|i| if i < filled { '█' } else { '░' })
+        .collect();
+
+    // Canon rule 2 gates on closure, and the Spells page gates on circularity
+    // as well — a ring that is not round enough fizzles rather than fires.
+    let verdict = if !ring.closed {
+        format!("ARMED — {} end(s) to join", ring.open_ends.len())
+    } else if quality < MIN_QUALITY_TO_FIRE {
+        format!("FIZZLES — not circular enough (needs q {MIN_QUALITY_TO_FIRE:.2})")
+    } else {
+        "WOULD FIRE".to_string()
+    };
+
+    panel.0 = format!(
+        "── ring {slot}/{} {:?} ── {}\n\
+         geometry   centre {:.0}, {:.0}      radius {:.1}\n\
+         \x20          circumference {circumference:.0}px   area {:.0}px²\n\
+         ink        {} stroke(s)   {} pts   drawn {:.0}px   ×{:.2} of the ring\n\
+         fit        rms {:.2}px   worst {:.2}px   trimmed {}   centroid off {centroid_off:.1}px\n\
+         coverage   spanned {:.1}%   gap {:.0}px / {:.0}°   facing {:.0}°\n\
+         closure    {}   loose ends {}\n\
+         quality    {quality:.3}  {bar}\n\
+         canon      r{:.0} → strength    neat {quality:.2} → duration\n\
+         verdict    {verdict}",
+        rings.len(),
+        ring.strokes,
+        if by_hover { "hover" } else { "first" },
+        fit.center.x,
+        fit.center.y,
+        fit.radius,
+        std::f32::consts::PI * fit.radius * fit.radius,
+        ring.strokes.len(),
+        ring.points,
+        ring.ink_length,
+        ring.ink_length / circumference.max(1.0),
+        fit.rms,
+        fit.max_miss,
+        fit.trimmed,
+        ring.coverage.spanned * 100.0,
+        ring.coverage.gap_length,
+        ring.coverage.gap.to_degrees(),
+        ring.coverage.gap_heading.to_degrees(),
+        if ring.closed { "CLOSED" } else { "OPEN" },
+        ring.open_ends.len(),
+        fit.radius,
+    );
 }
 
 /// Keeps the overlay in the bottom-left corner as the window resizes.
@@ -918,8 +1089,15 @@ fn circle_search(pad: &InkPad) -> Vec<assembly::RingCandidate> {
 ///
 /// Refits on every frame rather than caching. It costs a few microseconds
 /// against a 16 700µs budget, and a cache is a second copy of the truth.
-fn draw_fits(pad: Res<InkPad>, mut gizmos: Gizmos<DebugGizmos>) {
+fn draw_fits(
+    pad: Res<InkPad>,
+    window: Single<&Window>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+    mut gizmos: Gizmos<DebugGizmos>,
+) {
     let rings = circle_search(&pad);
+    let (camera, camera_transform) = *camera;
+    let focus = inspected(&rings, cursor_world(&window, camera, camera_transform)).map(|(s, _)| s);
 
     for (index, candidate) in rings.iter().enumerate() {
         let fit = candidate.fit;
@@ -944,11 +1122,17 @@ fn draw_fits(pad: Res<InkPad>, mut gizmos: Gizmos<DebugGizmos>) {
             );
         }
 
-        if index > 0 {
+        if focus != Some(index) {
             continue;
         }
 
-        // Detail only for the first ring. All of it at once is a smear.
+        // A collar just outside the ring the panel is describing, so there is
+        // never any doubt which one those numbers belong to.
+        gizmos
+            .circle_2d(at_center, fit.radius + LABEL_OFFSET * 0.4, INSPECT_MARK)
+            .resolution(FIT_RESOLUTION);
+
+        // Detail for the inspected ring only. All of it at once is a smear.
         let member: Vec<crate::Point> = pad
             .points
             .iter()

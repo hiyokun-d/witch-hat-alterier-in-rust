@@ -251,3 +251,38 @@ fn a_wider_join_tolerance_closes_a_narrower_gap() {
     assert!(!find_rings(&ink, &strict)[0].closed);
     assert!(find_rings(&ink, &loose)[0].closed);
 }
+
+#[test]
+fn ink_length_matches_the_circumference_of_a_full_ring() {
+    let rings = find_rings(&ring(0, 0.0, 0.0, 100.0, 400), &search());
+    let circumference = TAU * rings[0].fit.radius;
+    assert!(
+        (rings[0].ink_length / circumference - 1.0).abs() < 0.01,
+        "drew {} of {}",
+        rings[0].ink_length,
+        circumference
+    );
+}
+
+/// Going round twice lays down twice the ink. Not a substitute for the turning
+/// number, but it is the one signal already available that notices.
+#[test]
+fn ink_length_doubles_when_the_ring_is_drawn_twice() {
+    let rings = find_rings(&arc(0, 0.0, 0.0, 100.0, 0.0, 720.0, 400), &search());
+    let circumference = TAU * rings[0].fit.radius;
+    assert!(
+        rings[0].ink_length > circumference * 1.9,
+        "drew {} of {}",
+        rings[0].ink_length,
+        circumference
+    );
+}
+
+#[test]
+fn points_counts_every_member_stroke() {
+    let mut ink = arc(0, 0.0, 0.0, 120.0, 0.0, 320.0, 160);
+    ink.extend(arc(1, 0.0, 0.0, 120.0, 318.0, 362.0, 17));
+
+    let rings = find_rings(&ink, &search());
+    assert_eq!(rings[0].points, 177);
+}
