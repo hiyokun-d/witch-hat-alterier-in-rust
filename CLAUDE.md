@@ -483,6 +483,7 @@ atelier/
 │       │   ├── arrangement.rs symmetry + region analysis over a sign set
 │       │   ├── assembly.rs   strokes → rings; closure by endpoints
 │       │   ├── stroke.rs     path length + even resampling
+│       │   ├── templates.rs  recorded gestures, loaded from .ron
 │       │   ├── compiler.rs   Glyph → Spell, with validation
 │       │   ├── sim/          particles, fields, reactions
 │       │   └── tests/        one file per module above — see §5
@@ -536,8 +537,8 @@ M1  Core primitives   ██████████ 5/5   ✅
 M1R Canon rework      ██████████ 7/7   ✅
 M2  Window & pen      ██████████ 5/5   ✅
 M3  Ink               ██████████ 7/7   ✅
-M4  Recognizer        █████████░ 8/9   ← current
-M5  Compiler ring     ░░░░░░░░░░ 0/8
+M4  Recognizer        ██████████ 9/9   ✅
+M5  Compiler ring     ░░░░░░░░░░ 0/8   ← current
 M6  Elements/physics  ░░░░░░░░░░ 0/8
 M7  Reactions         ░░░░░░░░░░ 0/8
 M8  Web build         ░░░░░░░░░░ 0/7
@@ -545,13 +546,13 @@ M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
 ```
 
-M4 is nine tasks, not the eight first planned: M4.2b — assembling strokes into
-rings — was scoped as part of M4.2 and turned out to be its own piece of work.
+M4 came in at nine tasks, not the eight first planned: M4.2b — assembling
+strokes into rings — was scoped as part of M4.2 and turned out to be its own
+piece of work.
 
-**Current task:** M4.8 — template loading and golden tests. Recorded gestures
-go in `the-magic-assets/` as data (§4.4) keyed by `SigilId`/`SignId`, and
-`tests/data/` gets golden strokes that must keep recognising correctly.
-Closing M4.8 closes the milestone.
+**Current task:** M5.1 — compile a `Glyph` from the rings and contents the
+recognizer now produces. Blocked on nothing in code; blocked in practice on
+`templates.ron`, which is empty until the rune shapes are traced.
 
 **Where M4.1 landed:**
 
@@ -736,6 +737,31 @@ stroke at a time:
 - The measurement was taken with a throwaway test and then deleted: §4.1 says
   core has no clock, and a timing assertion in a debug build measures nothing
   anyway. A real bench belongs in `benches/` when §7 gets one.
+
+**Where M4.8 landed — and what is still missing:**
+
+- `templates.rs` loads recorded gestures from `.ron` and checks every id
+  against the catalogue, so a typo cannot quietly become a rune nobody can
+  draw. No filesystem: callers pass the file's contents, as `Catalog` does.
+- **`the-magic-assets/templates.ron` ships empty, on purpose.** The shapes
+  belong to the manga and have to be traced, not invented — §2 is explicit that
+  an honest hole beats a plausible guess. A test asserts it is still empty, so
+  that emptiness stays a decision rather than becoming an accident.
+- Golden tests (§5) use `tests/data/`: six plain shapes as templates, and the
+  same six drawn as a hand would — moved, resized, turned a few degrees, noisy,
+  several backwards or with the strokes reordered. All six recognise as
+  themselves. The fixtures are geometry and are labelled as such; they test the
+  machinery, not the vocabulary.
+- **A finding for whoever traces the runes.** A square and a ring sit 0.110 and
+  0.127 apart at 32 points — a 16% margin. Both are closed convex loops of even
+  radius, and 32 samples is not many to tell "has corners" from "does not".
+  Doubling `MATCH_POINTS` would separate them and would also cost `2^2.5`, or
+  ~2.3ms against §7's 1ms. So the catalogue is better off not holding two runes
+  that differ only in roundness.
+- **The gap before M5 is a recorder, not code.** Nothing can be matched until
+  the shapes exist, and they have to come from tracing panels or from drawing
+  them in the app and saving the pad in this format. That is a shell job — core
+  cannot write files — and it is not written yet.
 
 - `RingContents::extent` is the one number that must be captured here or lost:
   the wiki ties a spell's intensity to "the size of a sigil in relation to the

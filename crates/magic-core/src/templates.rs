@@ -20,9 +20,9 @@
 
 use serde::Deserialize;
 
+use crate::Point;
 use crate::catalog::{Catalog, CatalogError, SigilId, SignId};
 use crate::recognizer::{self, Template};
-use crate::Point;
 
 /// Which vocabulary a template's id belongs to.
 ///
