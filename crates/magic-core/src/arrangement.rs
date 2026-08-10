@@ -238,6 +238,154 @@ fn common_heading(signs: &[&Sign], spread: f32) -> Option<f32> {
         .then_some(normalize(mean))
 }
 
+/// Where a seal's magic will actually go.
+///
+/// Canon treats a sign set as a set of pushes, not a set of flags: "column
+/// signs which are all the same size, and as such, the same power… results in
+/// a balanced spell that shoots straight up", while one sign "far longer than
+/// the others… has more power, causing uneven pressure which makes the spell
+/// shoot off to the side" (§2.4).
+///
+/// So every sign contributes a vector — magnitude from its size, direction
+/// from where it sits — and their sum is the answer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Balance {
+    /// Which way the spell leans, in radians. Meaningless when
+    /// [`Balance::lean`] is near zero, and callers should check that first.
+    pub heading: f32,
+    /// How hard it leans, in the same units as sign size.
+    pub drift: f32,
+    /// Every sign's power added up regardless of direction.
+    ///
+    /// The denominator that makes `drift` comparable between a seal of three
+    /// signs and a seal of thirty.
+    pub power: f32,
+}
+
+impl Balance {
+    /// How far off centre the seal is, `0.0..=1.0`.
+    ///
+    /// Zero is perfectly balanced — the pushes cancel and the spell goes
+    /// straight up. One is every sign pulling the same way. This is what
+    /// "adding more signs to a spell can help to average them out" does: more
+    /// signs of equal size drive the numerator toward zero while the
+    /// denominator keeps growing.
+    pub fn lean(&self) -> f32 {
+        if self.power <= f32::EPSILON {
+            return 0.0;
+        }
+        (self.drift / self.power).clamp(0.0, 1.0)
+    }
+
+    /// Whether the seal is balanced enough to shoot where it is aimed.
+    ///
+    /// `tolerance` is a share of total power and is **ours** — canon says an
+    /// unbalanced spell "will shoot off in unexpected directions" and gives no
+    /// number (§2.6).
+    pub fn is_balanced(&self, tolerance: f32) -> bool {
+        self.lean() <= tolerance
+    }
+}
+
+/// Sums a sign set into the push it will produce.
+///
+/// Each sign pushes along the direction it is *drawn* — its orientation — with
+/// its size for magnitude. Reversed signs push the opposite way, which is what
+/// makes canon rule 6's cancellation fall out: a seal and its mirrored twin
+/// sum to nothing.
+///
+/// **Only directional signs steer.** §2.3 is explicit that for a
+/// semi-directional sign "changing their size will only alter the strength of
+/// their effect, not direction", and a non-directional one has no direction at
+/// all. So a seal of crush signs, however uneven, is strong rather than
+/// lopsided — they still count toward `power`, just not toward `drift`.
+///
+/// `directional` answers whether a given sign steers. It is a predicate rather
+/// than a `&Catalog` so the geometry can be tested without loading the whole
+/// vocabulary; real callers pass a lookup into `signs.ron`.
+///
+/// An empty set is perfectly balanced with no power, which is correct: a ring
+/// with no signs shoots nowhere in particular (and, per rule 9, explodes).
+pub fn balance(signs: &[Sign], directional: impl Fn(&SignId) -> bool) -> Balance {
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut power = 0.0;
+
+    for sign in signs {
+        power += sign.size.abs();
+        if !directional(&sign.kind) {
+            continue;
+        }
+
+        let push = if sign.reversed { -sign.size } else { sign.size };
+        x += push * sign.orientation.cos();
+        y += push * sign.orientation.sin();
+    }
+
+    Balance {
+        heading: y.atan2(x),
+        drift: (x * x + y * y).sqrt(),
+        power,
+    }
+}
+
+/// What a seal's tilt buys and what it costs.
+///
+/// Canon: "By tilting the signs within a seal, it is possible to produce a
+/// spell that rotates. The more tilted the signs, the more spin but less reach
+/// the spell will have."
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spin {
+    /// Mean tilt off the radial direction, in radians, `0..=π/2`.
+    pub tilt: f32,
+    /// Share of the spell's effort going into rotation, `0.0..=1.0`.
+    pub spin: f32,
+    /// Share left for distance, `0.0..=1.0`.
+    pub reach: f32,
+}
+
+/// Reads the spin a sign set will impart.
+///
+/// **The exchange rate is ours.** Canon states the tradeoff and gives no
+/// numbers, so we take `spin = sin(tilt)` and `reach = cos(tilt)` — the two
+/// components of the same push, which keeps `spin² + reach² = 1` and makes a
+/// sign pointing straight out pure reach and one lying tangent pure spin.
+/// Marked here rather than buried, per §2.6.
+///
+/// Weighted by size, because a large tilted sign turns the spell more than a
+/// small one does — size is power everywhere else and it is power here too.
+///
+/// Only directional signs are counted, for the same reason [`balance`] counts
+/// only those: rotating a sign with no direction changes nothing.
+pub fn spin(signs: &[Sign], directional: impl Fn(&SignId) -> bool) -> Spin {
+    let steering: Vec<&Sign> = signs
+        .iter()
+        .filter(|sign| directional(&sign.kind))
+        .collect();
+    let signs = &steering;
+
+    let power: f32 = signs.iter().map(|sign| sign.size.abs()).sum();
+    if power <= f32::EPSILON {
+        return Spin {
+            tilt: 0.0,
+            spin: 0.0,
+            reach: 1.0,
+        };
+    }
+
+    let tilt = signs
+        .iter()
+        .map(|sign| sign.tilt().min(core::f32::consts::PI - sign.tilt()) * sign.size.abs())
+        .sum::<f32>()
+        / power;
+
+    Spin {
+        tilt,
+        spin: tilt.sin().abs().clamp(0.0, 1.0),
+        reach: tilt.cos().abs().clamp(0.0, 1.0),
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/arrangement.rs"]
 mod tests;

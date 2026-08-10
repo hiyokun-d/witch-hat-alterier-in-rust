@@ -65,6 +65,12 @@ pub enum Family {
     Earth,
     Air,
     Time,
+    /// Shapes of flora, fauna and manmade objects.
+    ///
+    /// Sigils, not signs — retconned in Chapter 78 — and not inert: they
+    /// sculpt a spell into their own shape, target other spells built from the
+    /// same sigil, and restrict a spell to that shape's real counterparts.
+    Decorative,
     Misc,
 }
 
@@ -221,6 +227,21 @@ pub struct SigilDef {
     /// Whether this sigil can also serve as a sign.
     #[serde(default)]
     pub can_substitute_as_sign: bool,
+    /// What a decorative sigil can do with the shape it depicts.
+    ///
+    /// Empty for every other family. Canon gives decorative sigils three
+    /// effects and they are independent, so they are flags rather than one
+    /// mode: `sculpt` shapes the spell, `target` finds other spells built from
+    /// the same sigil, `restrict` limits the spell to that shape's real
+    /// counterparts.
+    #[serde(default)]
+    pub depicts: Option<String>,
+    #[serde(default)]
+    pub sculpt: bool,
+    #[serde(default)]
+    pub target: bool,
+    #[serde(default)]
+    pub restrict: bool,
     #[serde(default)]
     pub note: Option<String>,
     /// Spells this sigil is known to appear in.

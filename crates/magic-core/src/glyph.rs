@@ -32,6 +32,17 @@ pub struct Sign {
     /// `placement` — not relative to it. Compare the two with
     /// [`Sign::radial_alignment`].
     pub orientation: f32,
+    /// How large the sign is drawn, in the same units as the ring's radius.
+    ///
+    /// **Size is power.** Canon is explicit: column signs all the same size
+    /// give "the same power… a balanced spell that shoots straight up", while
+    /// one sign "far longer than the others… has more power, causing uneven
+    /// pressure which makes the spell shoot off to the side" (§2.4).
+    ///
+    /// Without this, symmetry can only ever be measured by *position*, and a
+    /// seal with evenly spaced signs of wildly different lengths would read as
+    /// perfectly balanced while shooting sideways.
+    pub size: f32,
     /// A mirrored sign inverts its effect: enlarge becomes shrink.
     pub reversed: bool,
 }
@@ -53,6 +64,17 @@ impl Sign {
     /// deadband without worrying which side of ±π they landed on.
     pub fn radial_alignment(&self) -> f32 {
         (self.orientation - self.placement).cos()
+    }
+
+    /// How far this sign is tilted off the radial direction, in radians,
+    /// `0..=π`.
+    ///
+    /// Zero points straight out or straight in; `π/2` lies tangent to the
+    /// ring. Canon: "By tilting the signs within a seal, it is possible to
+    /// produce a spell that rotates. The more tilted the signs, the more spin
+    /// but less reach."
+    pub fn tilt(&self) -> f32 {
+        self.radial_alignment().clamp(-1.0, 1.0).acos()
     }
 
     /// Whether the sign points away from the centre, beyond `deadband`.

@@ -10,6 +10,7 @@ fn sign(kind: &str) -> Sign {
         kind: kind.into(),
         placement: 0.0,
         orientation: 0.0,
+        size: 1.0,
         reversed: false,
     }
 }

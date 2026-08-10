@@ -3,18 +3,27 @@
 
 use super::*;
 
-use core::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+use core::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI};
 
 /// The catalog id of the region sign. A literal here rather than a lookup:
 /// these tests exercise the geometry, not the loader.
 const REGION: &str = "region";
 
 /// A sign sitting at `placement`, pointing straight out from the centre.
+///
+/// All one size, so these fixtures test symmetry of *position*. Power is
+/// tested separately — see the balance tests.
 fn spoke(kind: &str, placement: f32) -> Sign {
+    sized_spoke(kind, placement, 1.0)
+}
+
+/// A spoke of a chosen size, for the tests that care that size is power.
+fn sized_spoke(kind: &str, placement: f32, size: f32) -> Sign {
     Sign {
         kind: kind.into(),
         placement,
         orientation: placement,
+        size,
         reversed: false,
     }
 }
@@ -24,6 +33,7 @@ fn region_at(placement: f32, orientation: f32) -> Sign {
         kind: REGION.into(),
         placement,
         orientation,
+        size: 1.0,
         reversed: false,
     }
 }
@@ -248,4 +258,203 @@ fn region_classification_ignores_non_region_signs() {
             heading: None
         }
     );
+}
+
+// ── balance and spin ────────────────────────────────────────────────────────
+
+/// Every sign in these fixtures steers. The class rule gets its own test.
+fn all_directional(_: &SignId) -> bool {
+    true
+}
+
+/// The wiki's own example: identical column signs shoot straight up.
+#[test]
+fn signs_of_equal_size_evenly_spaced_are_balanced() {
+    let seal = evenly_spaced("column", 6);
+    let found = balance(&seal, all_directional);
+
+    assert!(found.lean() < 1e-5, "leaned {}", found.lean());
+    assert!(found.is_balanced(0.05));
+    assert!((found.power - 6.0).abs() < 1e-4);
+}
+
+/// The other half of the same example: one sign far longer than the others
+/// carries more power and the spell shoots off toward it.
+#[test]
+fn one_oversized_sign_steers_the_spell_toward_itself() {
+    let mut seal = evenly_spaced("column", 6);
+    // The sign at placement 0, made three times the length of its neighbours.
+    seal[0] = sized_spoke("column", 0.0, 3.0);
+
+    let found = balance(&seal, all_directional);
+    assert!(found.lean() > 0.2, "barely leaned: {}", found.lean());
+    assert!(found.heading.abs() < 0.05, "should lean toward 0 rad");
+    assert!(!found.is_balanced(0.05));
+}
+
+/// "Adding more signs to a spell can help to average them out."
+#[test]
+fn more_signs_average_an_imbalance_away() {
+    let lean_of = |n: usize| {
+        let mut seal = evenly_spaced("column", n);
+        seal[0] = sized_spoke("column", 0.0, 3.0);
+        balance(&seal, all_directional).lean()
+    };
+
+    assert!(lean_of(12) < lean_of(4), "more signs should even it out");
+}
+
+/// Canon rule 6 falls straight out of size being signed by `reversed`: a seal
+/// and its mirrored twin sum to nothing.
+#[test]
+fn a_seal_and_its_reversed_twin_cancel() {
+    let seal = evenly_spaced("column", 3);
+    let mut both = seal.clone();
+    both.extend(seal.iter().map(|sign| sign.reverse()));
+
+    assert!(balance(&both, all_directional).drift < 1e-5);
+}
+
+#[test]
+fn an_empty_seal_leans_nowhere() {
+    let found = balance(&[], all_directional);
+    assert_eq!(found.power, 0.0);
+    assert_eq!(found.lean(), 0.0);
+    assert!(found.is_balanced(0.0));
+}
+
+/// Signs pointing straight out are all reach and no spin.
+#[test]
+fn untilted_signs_impart_no_spin() {
+    let found = spin(&evenly_spaced("column", 6), all_directional);
+    assert!(found.spin < 1e-4, "spin {}", found.spin);
+    assert!((found.reach - 1.0).abs() < 1e-4);
+}
+
+/// "The more tilted the signs, the more spin but less reach."
+#[test]
+fn tilting_signs_trades_reach_for_spin() {
+    let tilted_by = |tilt: f32| {
+        let seal: Vec<Sign> = (0..6)
+            .map(|i| {
+                let placement = TAU * i as f32 / 6.0;
+                Sign {
+                    kind: "column".into(),
+                    placement,
+                    orientation: placement + tilt,
+                    size: 1.0,
+                    reversed: false,
+                }
+            })
+            .collect();
+        spin(&seal, all_directional)
+    };
+
+    let gentle = tilted_by(0.2);
+    let hard = tilted_by(1.0);
+
+    assert!(hard.spin > gentle.spin, "more tilt should spin more");
+    assert!(hard.reach < gentle.reach, "more tilt should reach less");
+    // The two are the components of one push, so they stay on the unit circle.
+    for found in [gentle, hard] {
+        let sum = found.spin * found.spin + found.reach * found.reach;
+        assert!((sum - 1.0).abs() < 1e-4, "spin² + reach² was {sum}");
+    }
+}
+
+/// Signs lying tangent to the ring are all spin and no reach.
+#[test]
+fn fully_tangent_signs_are_all_spin() {
+    let seal: Vec<Sign> = (0..4)
+        .map(|i| {
+            let placement = TAU * i as f32 / 4.0;
+            Sign {
+                kind: "column".into(),
+                placement,
+                orientation: placement + FRAC_PI_2,
+                size: 1.0,
+                reversed: false,
+            }
+        })
+        .collect();
+
+    let found = spin(&seal, all_directional);
+    assert!((found.spin - 1.0).abs() < 1e-4, "spin {}", found.spin);
+    assert!(found.reach < 1e-4, "reach {}", found.reach);
+}
+
+/// A big tilted sign turns the spell more than a small one, because size is
+/// power here as everywhere else.
+#[test]
+fn a_large_tilted_sign_outweighs_a_small_straight_one() {
+    let mixed = vec![
+        Sign {
+            kind: "column".into(),
+            placement: 0.0,
+            orientation: FRAC_PI_2,
+            size: 4.0,
+            reversed: false,
+        },
+        sized_spoke("column", PI, 1.0),
+    ];
+
+    assert!(
+        spin(&mixed, all_directional).spin > 0.6,
+        "the heavy tilted sign should dominate"
+    );
+}
+
+/// §2.3: "Changing their size will only alter the strength of their effect,
+/// not direction." A lopsided set of crush signs is strong, not lopsided.
+#[test]
+fn a_sign_that_does_not_steer_adds_power_without_drift() {
+    let mut seal = evenly_spaced("crush", 6);
+    seal[0] = sized_spoke("crush", 0.0, 5.0);
+
+    let found = balance(&seal, |_| false);
+    assert_eq!(
+        found.drift, 0.0,
+        "a non-steering sign must not lean the seal"
+    );
+    assert!(
+        (found.power - 10.0).abs() < 1e-4,
+        "but it still counts as power"
+    );
+    assert!(found.is_balanced(0.0));
+}
+
+/// A seal mixing both kinds leans only by its directional half.
+#[test]
+fn only_directional_signs_steer_a_mixed_seal() {
+    let mut seal = evenly_spaced("crush", 4);
+    seal.push(sized_spoke("column", 0.0, 2.0));
+
+    let found = balance(&seal, |kind| kind.as_str() == "column");
+    assert!(found.heading.abs() < 1e-4, "should lean toward the column");
+    assert!((found.drift - 2.0).abs() < 1e-4);
+    assert!(
+        (found.power - 6.0).abs() < 1e-4,
+        "crush still counts as power"
+    );
+}
+
+/// Rotating a sign with no direction changes nothing.
+#[test]
+fn tilting_a_non_directional_sign_imparts_no_spin() {
+    let seal: Vec<Sign> = (0..4)
+        .map(|i| {
+            let placement = TAU * i as f32 / 4.0;
+            Sign {
+                kind: "float".into(),
+                placement,
+                orientation: placement + FRAC_PI_2,
+                size: 1.0,
+                reversed: false,
+            }
+        })
+        .collect();
+
+    let found = spin(&seal, |_| false);
+    assert_eq!(found.spin, 0.0);
+    assert_eq!(found.reach, 1.0);
 }

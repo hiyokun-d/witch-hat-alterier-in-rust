@@ -145,15 +145,8 @@
              material first. Some materials cannot be converted.",
       confidence: Canon,
     ),
-    (
-      id: "repetition",
-      tier: Official,
-      class: NonDirectional,
-      can_substitute_as_sigil: true,
-      note: "Resets affected objects to a previous state. Also listed as a
-             time sigil — it genuinely occupies both roles.",
-      confidence: Canon,
-    ),
+    // "As of the bonus from Volume 12, the status of repetition has been
+    // retconned from that of a sign to a sigil." It lives in sigils.ron.
     (
       id: "weave",
       tier: Official,
@@ -167,18 +160,41 @@
 
     // Named in the source, effects not yet documented. Model them, give them
     // no behaviour, and do NOT invent one.
-    ( id: "cool",             tier: Official, confidence: Unknown ),
-    ( id: "strengthen",       tier: Official, confidence: Unknown ),
-    ( id: "sights_set",       tier: Official, confidence: Unknown,
-      note: "Possibly mind-controllable, like puppet." ),
-    ( id: "entwine",          tier: Official, confidence: Unknown ),
-    ( id: "sign_of_wind",     tier: Official, confidence: Unknown ),
-    ( id: "aeriforms_defined",tier: Official, confidence: Unknown ),
-    ( id: "glaives",          tier: Official, confidence: Unknown ),
+    ( id: "cool",             tier: Official, confidence: Inferred,
+      class: NonDirectional,
+      note: "Cools things down." ),
+    ( id: "strengthen",       tier: Official, confidence: Inferred,
+      note: "Empowerment. Makes objects stronger, harder, more durable." ),
+    ( id: "sights_set",       tier: Official, confidence: Inferred,
+      class: Directional,
+      note: "Focus. Aims the spell at a point or target. One of only two signs
+             steered by the caster's mind, the other being puppet." ),
+    ( id: "entwine",          tier: Official, confidence: Inferred,
+      class: SemiDirectional,
+      note: "Makes the object it is drawn on wrap around other objects." ),
+    ( id: "sign_of_wind",     tier: Official, confidence: Unknown,
+      class: Asymmetric,
+      note: "Spiraling Winds. Once served as a wind sigil outright in chapter
+             1; reaffirmed as canon by the volume 12 bonus. Function beyond
+             'related to wind' is unclear." ),
+    ( id: "aeriforms_defined",tier: Official, confidence: Unknown,
+      class: SemiDirectional,
+      note: "Name and design conflict — it looks like the wind sigil's
+             modifiers but shares a name with the aeriforms sigil. Known to
+             modify wind underfoot." ),
+    ( id: "glaives",          tier: Official, confidence: Canon,
+      class: SemiDirectional,
+      note: "Determines how deeply magic embeds into flesh. Two things make it
+             unlike every other sign. Engendale says glaives are not
+             technically signs at all but an older technique predating the Day
+             of the Pact — the Magic page calls them neither sign nor sigil.
+             And they are the only mark that may be drawn OUTSIDE the ring, so
+             long as they still connect to it, which is a real exception to
+             canon rule 1." ),
 
     // ---- UNOFFICIAL -----------------------------------------------------
     (
-      id: "window",
+      id: "selection",
       tier: Unofficial,
       class: NonDirectional,
       scope: SelfOnly,
@@ -202,7 +218,7 @@
       class: NonDirectional,
       reversible: true,
       placement: Center,
-      requires_one_of: ["window", "diamond"],
+      requires_one_of: ["selection", "diamond"],
       note: "Grows objects (corners out) or shrinks them (corners in). Window
              vs diamond decides self vs nearby.",
       confidence: Inferred,
@@ -282,27 +298,173 @@
       confidence: Inferred,
       seen_in: ["flying_puppet_of_diversion", "cloak_spell", "sealchair"],
     ),
-    ( id: "bind", tier: Unofficial, confidence: Unknown ),
-    ( id: "orb",  tier: Unofficial, confidence: Unknown ),
-    ( id: "link", tier: Unofficial, confidence: Unknown ),
+    (
+      id: "orb",
+      tier: Unofficial,
+      class: NonDirectional,
+      note: "Makes a spherical space above the seal in which the material the
+             spell controls collects. Material only gathers there if added
+             directly, and fills bottom-up under gravity like a cup.",
+      confidence: Inferred,
+      seen_in: ["water_orb"],
+    ),
+    (
+      id: "link",
+      tier: Unofficial,
+      class: SemiDirectional,
+      note: "Links magic between the object it is drawn on and every other
+             object broken off, removed from, or made out of the same original
+             — the split-shard bangles are rings cut from one crystal. What
+             link does paired with anything but weave is unknown.",
+      confidence: Inferred,
+      seen_in: ["light_tracer"],
+    ),
+    (
+      id: "purify",
+      tier: Unofficial,
+      class: Asymmetric,
+      note: "Separates impurities out of the sigil's magic — particulates from
+             water, dust from air.",
+      confidence: Inferred,
+      seen_in: ["purify", "sewer_grate"],
+    ),
+    (
+      id: "stillness",
+      tier: Unofficial,
+      note: "Holds a magical effect static in one place. Reasoned from
+             snowfending, where it likely pins heat over the house.",
+      confidence: Inferred,
+      seen_in: ["snowfending"],
+    ),
+    (
+      id: "projection",
+      tier: Unofficial,
+      note: "Projects an effect outward, likely only images the spell names.",
+      confidence: Inferred,
+      seen_in: ["mirror_cloak_spell", "mirror_spell"],
+    ),
+    (
+      id: "launch",
+      tier: Unofficial,
+      class: Directional,
+      note: "Generates the target in the direction it points, in a powerful
+             but short-lived burst — far enough to clear trees, then spent,
+             leaving behind whatever else the seal generated.",
+      confidence: Inferred,
+      seen_in: ["ancient_light_beacon", "bird_of_light_beacon"],
+    ),
+
+
+    // ---- OFFICIAL, added after reading Signs Explained first-hand ---------
+    (
+      id: "bind",
+      tier: Official,
+      jp: "留める矢",
+      note: "Binding. Halts the movement of the target material and binds it
+             together, so it acts and is moved as a single unit.",
+      confidence: Inferred,
+      seen_in: ["raincleaver_spell", "sand_bridge"],
+    ),
+    (
+      id: "stability",
+      tier: Official,
+      class: NonDirectional,
+      can_substitute_as_sigil: true,
+      note: "Stability and Level Planes. Balances the target in a plane in the
+             air — like a float on water, free to turn and drift but always on
+             top. No known difference between the two- and three-lined
+             versions. Can take the place of a sigil.",
+      confidence: Canon,
+      seen_in: ["earth_lift", "fish_guidance", "pouch_guidance",
+                "floatglow_lamp_seal", "glowstone_path_seal",
+                "pegasus_carriage_spell", "seal_of_expansion_and_levitation",
+                "snowfending", "wayward_whorlwind"],
+    ),
+    (
+      id: "coil",
+      tier: Official,
+      class: NonDirectional,
+      reversible: false,
+      note: "Makes physical matter manifest in a spring or coil. Solids only —
+             no effect on liquids or gases.",
+      confidence: Inferred,
+    ),
+    (
+      id: "gathering",
+      tier: Official,
+      jp: "集める矢",
+      romaji: "atsumeru ya",
+      class: SemiDirectional,
+      note: "Close to collection in design and function: lets a spell build its
+             effect from surrounding material. May be the less passive of the
+             two, actively drawing material in rather than taking what is
+             near. Never seen inverted.",
+      confidence: Inferred,
+      seen_in: ["raincleaver_spell", "vapor_bubble_spell", "wayward_whorlwind"],
+    ),
+    (
+      id: "solidification",
+      tier: Official,
+      jp: "凝固の矢",
+      note: "Makes magic drawn within or connecting to it more solid. Can be
+             written alone or with signs, sigils or seals inside one of its
+             circles, to the same effect. Told apart from a linked seal by its
+             straight lines and by the seal it links to being empty.",
+      confidence: Inferred,
+      seen_in: ["raincleaver_spell", "sand_bridge"],
+    ),
+    (
+      id: "envelopment",
+      tier: Official,
+      jp: "衣まといの矢",
+      note: "Makes an effect envelop or surround what it targets.",
+      confidence: Inferred,
+      seen_in: ["beldaruits_illusion_cloak_spell", "borrowshade",
+                "mirror_cloak_spell", "petrification", "raincleaver_spell",
+                "sasarans_cloak_spell"],
+    ),
+    (
+      id: "concealment",
+      tier: Official,
+      jp: "覆いの矢",
+      romaji: "ooi no ya",
+      note: "Hides a target object. Named by Euini examining the Mirror Cloak
+             of Borrowshade, where it conceals the wearer in shadow.",
+      confidence: Canon,
+      seen_in: ["borrowshade", "looking_glass", "makeover_mask_spell",
+                "mirror_cloak_spell", "sasarans_cloak_spell"],
+    ),
+    (
+      id: "reflection",
+      tier: Official,
+      jp: "反射の矢",
+      romaji: "hansha no ya",
+      note: "Targets a reflected image found on the object the casting seal is
+             drawn on — the Mirror Cloak draws on a beast reflected in its own
+             scales.",
+      confidence: Inferred,
+      seen_in: ["mirror_cloak_spell", "mirror_spell"],
+    ),
+    (
+      id: "windows",
+      tier: Official,
+      placement: SurroundsSigil,
+      note: "Connects two spaces that are not physically joined — a portal.
+             Drawn unlike any other sign: it lines the seal as an additional
+             ring with several identical small marks inside it, rather than
+             sitting beside the sigil. Many variants, one per Windowway.
+             NOTE: not to be confused with `selection`, which this project
+             previously called `window`.",
+      confidence: Canon,
+      seen_in: ["doorknob_determined_destination_doorway", "handheld_windowway",
+                "sasarans_cloak_spell", "windowway_spell"],
+    ),
 
     // ---- DECORATIVE -----------------------------------------------------
-    (
-      id: "bird",
-      tier: Decorative,
-      placement: SurroundsSigil,
-      note: "Projects a bird made of the seal's magic that flies around a
-             while. Design changed between chapters 11 and 28.",
-      confidence: Canon,
-      seen_in: ["bird_of_light_beacon"],
-    ),
-    (
-      id: "animal_signs",
-      tier: Decorative,
-      note: "A collection of Zozah Peninsula animal shapes. No practical
-             utility; use is declining, kept as hobby and decoration. Good
-             flavour for a cosmetic system.",
-      confidence: Canon,
-    ),
+    //
+    // Empty, and it stays empty. What used to live here — bird, the Zozah
+    // animal shapes — were retconned from decorative *signs* to decorative
+    // *sigils* in Chapter 78, and now live in sigils.ron with real effects
+    // (sculpt, target, restrict). There is no decorative tier of signs.
   ],
 )

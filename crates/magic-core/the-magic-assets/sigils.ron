@@ -33,8 +33,11 @@
       primary_tetrad: false,
       caps: (create: true, manipulate: true, move: false, collect: false),
       affects: ["flame"],
-      note: "Involved in producing flame without heat. May not be sufficient
-             alone — supporting signs are possibly required.",
+      note: "Involved in producing flame without heat. NOT LISTED on the
+             wiki's Sigils Explained page — that page says fire has three
+             variants and then names only two, so this is the missing third by
+             elimination, not by statement. Phantasmal Fireball may simply use
+             the base fire sigil.",
       confidence: Unknown,
       seen_in: ["phantasmal_fireball"],
     ),
@@ -148,6 +151,9 @@
       seen_in: ["repetition_seal", "magic_cookpot", "washing_barrels"],
     ),
     (
+      // NOT LISTED on Sigils Explained. Repetition is the only time sigil the
+      // page names; the Time Stop *spell* exists but no Stop *sigil* is
+      // documented. Kept because the spell has to be built from something.
       id: "stop",
       family: Time,
       primary_tetrad: false,
@@ -160,12 +166,12 @@
 
     // ---- MISC -----------------------------------------------------------
     (
-      id: "crystal",
+      id: "crystalize",
       family: Misc,
       primary_tetrad: false,
       likely_variant_of: "earth",
       caps: (create: true, manipulate: true, move: false, collect: false),
-      affects: ["crystal"],
+      affects: ["crystal", "ice"],
       note: "Creates and manipulates crystalline objects. Only Richeh uses
              it. Notable as an apparent earth variant that CAN create,
              unlike earth itself.",
@@ -183,5 +189,241 @@
       confidence: Canon,
       seen_in: ["guidance_orb", "pouch_of_calling"],
     ),
+
+    // ---- DECORATIVE family ----------------------------------------------
+    //
+    // Sigils, not signs: retconned in Chapter 78. Not inert either —
+    // they sculpt a spell into their shape, target other spells built
+    // from the same sigil, and restrict a spell to that shape's real
+    // counterparts. The cost is space inside the ring.
+    (
+      id: "bird_a",
+      family: Decorative,
+      jp: "鳥の紋",
+      romaji: "tori no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a bird",
+      sculpt: true, target: true, restrict: true,
+      note: "One spell uses two bird sigils and creates only one bird. Design changed in Chapter 28.",
+      confidence: Canon,
+      seen_in: ["bird_of_light_beacon"],
+    ),
+    (
+      id: "bird_b",
+      family: Decorative,
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a bird, noticeably more duck-like than bird A",
+      sculpt: true, target: true, restrict: true,
+      confidence: Canon,
+    ),
+    (
+      id: "dragon",
+      family: Decorative,
+      jp: "巨鱗竜の紋",
+      romaji: "doragon no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a dragon",
+      sculpt: true, target: true, restrict: true,
+      note: "Species unknown; the accompanying illustration looks like a Dragonpass Isles Wyrm.",
+      confidence: Canon,
+      seen_in: ["water_dragon"],
+    ),
+    (
+      id: "flower",
+      family: Decorative,
+      jp: "花の紋",
+      romaji: "hana no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "various kinds of flower",
+      sculpt: true, target: true, restrict: true,
+      note: "The species — and possibly the count — is set by five small identical symbols surrounding the sigil, acting as modifiers. A level of nesting below the sigil that nothing else in the grammar has, and not yet modelled.",
+      confidence: Canon,
+      seen_in: ["flowers_of_light", "water_dragon", "water_rose"],
+    ),
+    (
+      id: "horse",
+      family: Decorative,
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a horse",
+      sculpt: true, target: true, restrict: true,
+      note: "Spells using it can pull heavy loads, so 'decorative sigils lack practical utility' is not absolute.",
+      confidence: Canon,
+      seen_in: ["water_horse"],
+    ),
+    (
+      id: "owlcat",
+      family: Decorative,
+      jp: "猫梟の紋",
+      romaji: "neko fukurou no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a whole owlcat",
+      sculpt: true, target: true, restrict: true,
+      note: "Likely the full animal, as against the confirmed head-only variant.",
+      confidence: Inferred,
+    ),
+    (
+      id: "owlcat_head",
+      family: Decorative,
+      jp: "猫梟の紋",
+      romaji: "neko fukurou no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "an owlcat's head in winter plumage",
+      sculpt: true, target: true, restrict: true,
+      note: "The owlcat sigil minus the body, which implies decorative sigils can be split into portions that produce the matching body parts.",
+      confidence: Canon,
+      seen_in: ["glowing_owlcat"],
+    ),
+    (
+      id: "scalewolf",
+      family: Decorative,
+      jp: "鱗狼の紋",
+      romaji: "uroko ookami no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a scalewolf",
+      sculpt: true, target: true, restrict: true,
+      confidence: Canon,
+    ),
+    (
+      id: "torchstag",
+      family: Decorative,
+      jp: "松明鹿の紋",
+      romaji: "taimatsu shika no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a torchstag",
+      sculpt: true, target: true, restrict: true,
+      confidence: Canon,
+    ),
+    (
+      id: "liongoat",
+      family: Decorative,
+      romaji: "shishi yagi no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a liongoat",
+      sculpt: true, target: true, restrict: true,
+      confidence: Canon,
+    ),
+    (
+      id: "valance_leech",
+      family: Decorative,
+      jp: "帳蛭の紋",
+      romaji: "tobari hiru no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a valance leech",
+      sculpt: true, target: true, restrict: true,
+      confidence: Canon,
+      seen_in: ["valance_leech_counterclock", "valance_leech_of_light"],
+    ),
+    (
+      id: "frillram",
+      family: Decorative,
+      jp: "襟巻羊の紋",
+      romaji: "erimakihitsuji no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a frillram",
+      sculpt: true, target: true, restrict: true,
+      confidence: Canon,
+    ),
+    (
+      id: "sword",
+      family: Decorative,
+      jp: "剣の紋",
+      romaji: "tsurugi no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a sword",
+      sculpt: true, target: true, restrict: true,
+      confidence: Canon,
+      seen_in: ["raincleaver_spell"],
+    ),
+    (
+      id: "gryphon",
+      family: Decorative,
+      jp: "グリフォンの紋",
+      romaji: "gurifon no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a gryphon",
+      sculpt: true, target: true, restrict: true,
+      note: "Mentioned by name only. Nobody has seen what it looks like.",
+      confidence: Unknown,
+    ),
+    (
+      id: "pegasus",
+      family: Decorative,
+      jp: "羽根馬の紋",
+      romaji: "hane uma no mon",
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      depicts: "a pegasus",
+      sculpt: true, target: true, restrict: true,
+      note: "Mentioned by name only. Nobody has seen what it looks like.",
+      confidence: Unknown,
+    ),
+
+    // ---- MISC and fan-named ---------------------------------------------
+    (
+      id: "calling",
+      family: Misc,
+      jp: "呼び声の紋",
+      romaji: "yobigoe no mon",
+      caps: (create: true, manipulate: false, move: false, collect: false),
+      affects: ["sound"],
+      note: "Repeatedly echoes a recorded phrase. Called a sigil only in the
+             Japanese; the English translates it as a verb.",
+      confidence: Canon,
+      seen_in: ["pouch_of_calling", "pouch_guidance"],
+    ),
+    (
+      id: "obliviation",
+      family: Misc,
+      jp: "忘却",
+      romaji: "boukyaku",
+      caps: (create: false, manipulate: true, move: false, collect: false),
+      note: "Function unknown. Only ever seen in memory erasure, usually
+             accompanied by glaives.",
+      confidence: Unknown,
+      seen_in: ["memory_erasure"],
+    ),
+    (
+      id: "doorways",
+      family: Misc,
+      jp: "扉の紋",
+      romaji: "tobira no mon",
+      caps: (create: false, manipulate: true, move: true, collect: false),
+      note: "Likely names the location a spell connects to. Possibly many
+             variants, one per place — the only concrete example connects to
+             the Ceyam Woods.",
+      confidence: Inferred,
+      seen_in: ["windowway"],
+    ),
+    (
+      id: "smoke",
+      family: Misc,
+      jp: "煙",
+      romaji: "kemuri",
+      caps: (create: true, manipulate: false, move: false, collect: false),
+      affects: ["smoke"],
+      note: "Fan-named. Creates and generates smoke; whether it can also
+             manipulate smoke has not been seen.",
+      confidence: Inferred,
+      seen_in: ["smoke_cloud"],
+    ),
+    (
+      id: "flickering_light",
+      family: Fire,
+      caps: (create: true, manipulate: false, move: false, collect: false),
+      affects: ["light"],
+      note: "Fan-named. Function unknown. Coco's failed attempt produced a
+             small firework, so the real effect is probably that but stable.",
+      confidence: Unknown,
+      seen_in: ["forbidden_glow"],
+    ),
+    (
+      id: "lightning",
+      family: Misc,
+      caps: (create: true, manipulate: true, move: false, collect: false),
+      affects: ["electricity"],
+      note: "Fan-named. Function unknown. Likely creates and manipulates
+             electricity, from its design and its use in a bolt-throwing spell.",
+      confidence: Unknown,
+    ),
+
   ],
 )

@@ -89,160 +89,320 @@ question comes up, check here first.
 
 Where the wiki says an effect is unknown, this section says unknown. Do not
 fill those gaps with invention — an honest hole is a better spec than a
-plausible guess, and §2.5 is where our own ideas are allowed to live.
+plausible guess, and §2.6 is where our own ideas are allowed to live.
 
-### 2.1 The three components
+### 2.1 The parts of a seal
 
-Every spell (called a _glyph_ or _seal_) has exactly three parts:
+| Part | Position | Role |
+| --- | --- | --- |
+| **Sigil** | Usually the centre | _What_ — the type of spell |
+| **Signs** (keystones) | Around the sigil | _How_ — form, direction, balance, spin |
+| **Ring** | Encloses everything | _Activation_ — closes the circuit |
+| **Glaives** | Claw-shaped protrusions | _How deeply_ a spell embeds in a body |
 
-| Part                  | Position            | Role                               |
-| --------------------- | ------------------- | ---------------------------------- |
-| **Sigil**             | Center              | _What_ — the element               |
-| **Signs** (keystones) | Around the sigil    | _How_ — form, direction, behaviour |
-| **Ring**              | Encloses everything | _Activation_ — closes the circuit  |
+**Glaives are neither signs nor sigils** — the Magic page says so outright, so
+they are a fourth kind of mark, not a sign with an odd name. They determine
+"how firmly a spell will imbed itself into one's body", and whether that means
+depth or tenacity is unclear. Nearly forgotten since the Day of the Pact; seen
+on memory erasure and slime rendering.
 
-**The sigil is optional.** Most spells have one, but Repetition, Billow, and
-Vision can occupy the center and drive a spell alone. A glyph with no sigil is
-a legal spell, and the compiler must accept it.
+**The sigil is optional.** "While sigils are not required to create a
+functional spell, the vast majority contain at least one." Repetition, Billow
+and Vision can drive a spell alone, and a glyph with no sigil is a legal spell
+the compiler must accept.
+
+**The ring is not optional, and on its own it is already a spell:**
+
+> "A ring is the bare minimum required to produce a spell. If a ring is the
+> only thing drawn, the spell generated will simply be a rapid discharge of
+> energy, i.e. an explosion."
+
+An empty ring is a bomb, not a no-op. Nothing downstream may treat it as
+"nothing to do".
 
 ### 2.2 Sigils — families and variants
 
-Sigils are not a flat list of five elements. They are **families**, each
-holding variants whose behaviour differs from one another. Behaviour belongs to
-the variant, never to the family.
+Sigils are **families**, each holding variants whose behaviour differs from one
+another. Behaviour belongs to the variant, never to the family.
 
-**Fire** — flame, heat, light
+**Fire** — flame, heat, light. The page says three variants and lists two.
 
-| Variant              | Effect                                                                                            |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| **Fire**             | Creates and manipulates flame or heat                                                             |
-| **Unburning Flames** | Heatless flame — the phantasmal fireball. Exact mechanism unknown; may need supporting signs      |
-| **Light**            | Manifests magic as light. A fire variant, classified separately only because light spells are many |
+| Variant | Effect |
+| --- | --- |
+| **Fire** 炎の紋 | Creates and manipulates flame or heat. Primary tetrad |
+| **Light** 光の紋 | Manifests magic as light. A fire variant |
 
-**Water**
+**Water** — one variant.
 
-| Variant   | Effect                                                                                                                                  |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **Water** | Manipulates, collects, and creates water. Long-duration water spells _collect_ rather than create, implying creation costs more energy |
+| Variant | Effect |
+| --- | --- |
+| **Water** 水の紋 | Manipulates, collects, and creates water. Long-duration spells _collect_ rather than create, implying creation costs more. Primary tetrad |
 
-**Earth**
+**Earth** — one variant.
 
-| Variant   | Effect                                                                     |
-| --------- | ---------------------------------------------------------------------------- |
-| **Earth** | Manipulates wood, stone, sand, soil. **Cannot create them** |
+| Variant | Effect |
+| --- | --- |
+| **Earth** 地の紋 | Manipulates wood, stone, sand, soil. **Cannot create them.** Also called the sigil of might 力の紋. Primary tetrad |
 
-**Air**
+**Air** — four variants.
 
-| Variant            | Effect                                                                          |
-| ------------------ | --------------------------------------------------------------------------------- |
-| **Wind**           | Moves and manipulates air. **Cannot create it**                                 |
-| **Aeriforms**      | Creates and manipulates air. **Cannot move it**                                 |
-| **Wind Underfoot** | Supports solid objects suspended in air — an air platform. Mechanism unclear    |
-| **Whorling Winds** | Manipulates air through rotation. Looks visually unlike the other air sigils, reason unknown |
+| Variant | Effect |
+| --- | --- |
+| **Wind** 風の紋 | Moves and manipulates air. **Cannot create it.** Also called the sigil of levitation 浮遊の紋. Primary tetrad |
+| **Aeriforms** 気体の紋 | Creates and manipulates air. **Cannot move it** |
+| **Wind Underfoot** 足場のある風の紋 | Supports solid objects suspended in air. Mechanism unclear |
+| **Whorling Wind** つむじ風の紋 | Manipulates air through rotation. Three-sided, which may hint at a fire connection — heating the air, as a hot-air balloon does |
 
-**Time**
+**Time** — one variant.
 
-| Variant        | Effect                                                                                                                             |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Repetition** | Continuously resets affected objects to the state they held when the spell took hold. Spring-like: makes soft things elastic, stops rot |
-| **Stop**       | Halts time outright for affected objects. Paired with another sigil it stops one aspect only — with fire, heat stops changing        |
+| Variant | Effect |
+| --- | --- |
+| **Repetition** くり返し | Continuously resets affected objects to the state they held when the spell took hold, temperature included. Spring-like: makes soft things elastic, stops rot, repairs damage |
+
+> Repetition "has been referred to a sign, a seal, and a sigil". Its
+> classification is genuinely unsettled in canon, so ours may be too.
+
+**Decorative** — sixteen, and **they are sigils, not signs**:
+
+> "Decorative sigils were previously referred to as decorative signs, up until
+> this was **retconned in Chapter 78**."
+
+They are not inert. Three established effects:
+
+1. **Sculpting** — "Spells can be sculpted to take on the rough shape of its
+   corresponding design."
+2. **Targeting** — "or target other spells shaped by the same sigil."
+3. **Restriction** — "They also allow spells to limit their effects to the
+   physical counterparts of their respective designs."
+
+The cost is space: "Decorative sigils take up a large amount of space inside a
+seal and lack practical utility, leading to most of them being lost to time or
+used in a witch's personal doodles." Not absolute — Horse spells "are capable
+of pulling heavy loads, suggesting that this sigil has the potential for
+practical usage."
+
+`Bird A · Bird B · Dragon · Flower · Horse · Owlcat · Owlcat Head · Scalewolf ·
+Torchstag · Liongoat · Valance Leech · Frillram · Sword · Gryphon · Pegasus`
+
+Two structural facts worth more than the list:
+
+- **They decompose.** Owlcat Head is the Owlcat sigil minus the body, which
+  "implies that decorative signs can be split into smaller portions which will
+  form the individual body parts corresponding to that section".
+- **They can take modifiers of their own.** Flower's species "is determined by
+  five, small, identical symbols that surround the sigil, acting as modifiers"
+  — a level of nesting below the sigil that nothing else in the grammar has.
+
+Gryphon and Pegasus are named only; nobody has seen what they look like.
 
 **Misc**
 
-| Variant      | Effect                                                                            |
-| ------------ | ----------------------------------------------------------------------------------- |
-| **Crystal**  | Creates and manipulates crystalline objects. Only Richeh uses it                   |
-| **Guidance** | Attracts objects matching parameters set by the other signs and sigils in the spell |
+| Sigil | Effect |
+| --- | --- |
+| **Guidance** 誘導の紋 | Attracts objects matching parameters set by the other signs and sigils in the spell |
+| **Calling** 呼び声の紋 | Repeatedly echoes a recorded phrase. Called a sigil only in Japanese |
+| **Obliviation** 忘却 | Function unknown. Only ever seen in memory erasure, usually with glaives |
+| **Doorways** 扉の紋 | Likely names the location a spell connects to. Possibly many variants, one per place |
 
-> **Critical rule — a sigil's size and location within a seal do not change its
-> behaviour** (with rare exceptions). The recognizer must therefore score sigils
-> on **shape only**, never on position or scale.
+**Unofficial** — fan-named, not established.
 
-> **Corrections to our older design.** Float was never an element — it is a
-> sign. Rotation was never a sign — Whorling Winds is a sigil, so rotation is a
-> property of the element, not a modifier. Both are fixed below and in §3.
+| Sigil | Effect |
+| --- | --- |
+| **Crystalize** | Crystalises air or water into crystal, or into ice. What decides which is unknown, and may be user intent |
+| **Smoke** 煙 | Creates and generates smoke. Whether it can also manipulate smoke is unseen |
+| **Flickering Light** | Unknown. Coco's failed attempt gave a small firework, so the real effect is probably that but stable |
+| **Lightning** | Unknown. Likely creates and manipulates electricity, from its design and its use in a bolt-throwing spell |
+
+> **Critical rule.** "Regardless of a sigil's size or location within a seal,
+> its behavior will be the same (with specific exceptions)." So the recognizer
+> scores sigils on **shape only**, never on position or scale.
+>
+> **But size is not meaningless.** "The size of a sigil in relation to the ring
+> determines the intensity and strength of the spell's effect, with larger
+> sigils creating more powerful effects." Size does not change *what* a sigil
+> does; it changes *how strongly*. Both are true and they belong to different
+> layers — see §3.1.
 
 ### 2.3 Signs (keystones) — the instruction set
 
-Signs control the **form** the sigil's effect takes, plus its size and
-direction. Same sigil, different sign, completely different spell: water +
-dispersion pours out on all sides like an overflowing bucket, water + column
-shoots out fast like a hose pinched by a finger.
+Signs control the **form** the sigil's effect takes. Same sigil, different
+sign, completely different spell: water + dispersion pours out on all sides,
+water + column shoots out like a hose pinched by a finger.
 
-The wiki sorts signs into three **provenance tiers**, and we keep that
-distinction in the data model — see the `canon` field in §3. It records which
-behaviours are established and which are fan reconstruction, so a bug report
-about a wrong effect can be answered with "that was never canon."
+**Forty signs have been identified** — 26 officially named, 14 fan-named —
+"with more yet to be deciphered".
+
+#### The four classes
+
+The wiki's own taxonomy, and explicitly *not* the manga's: "These groups are
+never mentioned, named, or explained within the source material." Kept anyway,
+because the class decides what size and rotation *mean* for a given sign.
+
+| Class | Symmetry | What size does | What rotation does | Invertible |
+| --- | --- | --- | --- | --- |
+| **Directional** | bilateral, not radial | changes **direction and power** | aims the effect | yes |
+| **Semi-directional** | usually bilateral | changes **strength only** | nothing | yes |
+| **Non-directional** | radial, not bilateral | strength only | nothing | **no** — no front to point |
+| **Asymmetric** | none | unknown | unknown | unknown |
+
+That last column is a validation rule, not flavour: a non-directional sign
+*cannot* be reversed, because there is no way to make it point inward.
 
 #### Officially named
 
-| Sign            | Effect                                                                                                                                                          |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Column**      | Manifests as a column or beam above the glyph. Unbalanced signs make it manifest toward whichever side has more (radial symmetry does not count as unbalanced). Shorter line usually faces outward |
-| **Dispersion**  | A column that leaks in all directions instead of beaming                                                                                                        |
-| **Levitation**  | Magic floats above the glyph, or moves the object it is drawn on. Movement follows where the signs point; arrow side usually faces inward                        |
-| **Pull**        | Pulls matter of the same kind as its magic toward the glyph when arrows point inward. Angled signs make the pull twist. Inverted likely pushes                   |
-| **Crush**       | Disintegrates objects, or reassembles them when reversed. Only ever seen with earth; other pairings unknown                                                     |
-| **Float**       | Makes the object it is drawn on float regardless of gravity. Partly retconned into levitation; surviving uses are float-only                                     |
-| **Region**      | Determines _where_ magic manifests relative to the glyph — four cases, see below                                                                                |
-| **Convergence** | Focuses magic to a single point; makes loose particles rigid and compact (sand becomes hard — serpent's bed of sand). One triangle point usually faces inward     |
-| **Collection**  | Collects material, possibly magic, from above and around the glyph for the spell to use. Open side faces inward                                                  |
-| **Billow**      | Converts material into cloud. Needs collection to gather the material first; some materials cannot convert. **Can take the place of a sigil**                    |
-| **Repetition**  | Resets affected objects to a previous state. **Can take the place of a sigil**                                                                                  |
-| **Weave**       | Turns solid objects into long flexible ribbons on contact. Invented by Richeh. Must surround the central sigil                                                   |
+| Sign | Class | Effect |
+| --- | --- | --- |
+| **Columns** 柱の矢 | directional | An area of effect shaped like a column. "The amount of signs will affect the range or quantity of magic generated… Increasing the length of the sign will apply additional pressure or power in a given direction." Inverted, manifests horizontally like dispersion. Also called Signs of Power |
+| **Dispersion** 拡散の矢 | unclear | A column that leaks its magic outward instead of beaming it |
+| **Levitation** 浮遊の矢 | directional | Floats the target, often shaping it into a sphere when balanced. Length sets how far it travels, what weight it carries, or its speed |
+| **Pulling** 引き寄せの矢 | directional | Pulls matter toward the seal when the arrow points inward. **"When pointed inwards at an angle, the spell will have both a pulling and twisting effect, and it's likely that if rotated a full 90 degrees, the spell will just twist without pulling"** |
+| **Crushing** 破砕の矢 | semi | Disintegrates objects; "the bigger the sign, the smaller the pieces". Inverted, reforms them — but they revert when the spell ends |
+| **Dancing Puppets** 踊る人形の矢 | unclear | Lets a user steer the object it is drawn on, apparently by mind. Movement type follows the sigil |
+| **Stability / Level Planes** | non-directional | Balances the target in a plane in air, like a float on water. **Can take the place of a sigil** |
+| **Regions** 領域の矢 | directional | Where magic manifests — four cases, below |
+| **Convergence** 収束の矢 | semi | Focuses magic to a point; packs loose particles rigid |
+| **Stretch** (fan: Weave) | non-directional | Turns solids into long flexible ribbons on contact. Surrounds the central sigil |
+| **Coil** | non-directional | Manifests matter in a spring or coil. **Solids only** — no effect on liquids or gases |
+| **Cooling** 冷やす矢 | non-directional | Cools things down |
+| **Empowerment** 強化の矢 | — | Makes objects stronger, harder, more durable |
+| **Focus / Sights Set** 照準の矢 | directional or semi | Aims the spell at a point or target. One of only two signs steered by mind |
+| **Entwining** 巻きつきの矢 | semi | Makes the object it is drawn on wrap around other objects |
+| **Spiraling Winds** 風の矢 | **asymmetric** | Once served as a wind sigil outright. Function beyond "related to wind" unclear |
+| **Aeriforms Defined** 気体の示す矢 | semi | Name and design conflict. Known to modify the wind underfoot sigil |
+| **Gathering** 集める矢 | directional or semi | Like collection, but may actively draw material in rather than take what is near |
+| **Glaives** | semi | How deeply magic embeds **into flesh**. See the ring exception in §2.5 |
+| **Solidification** 凝固の矢 | — | Makes magic drawn within or connecting to it more solid |
+| **Binding** 留める矢 | — | Halts the target's movement and binds it into a single unit |
+| **Envelopment** 衣まといの矢 | — | Makes an effect envelop what it targets |
+| **Concealment** 覆いの矢 | — | Hides a target object |
+| **Reflection** 反射の矢 | — | Targets a reflected image found on the object the seal is drawn on |
+| **Windows** | — | Connects two spaces not physically connected — a portal. Drawn as **an additional ring** lining the spell, not as a mark beside the sigil. Many variants |
 
-**Region's four cases.** Computed from where _all_ region signs point
-collectively, not from any one sign:
-
-| Arrangement                    | Where the magic manifests                            |
-| ------------------------------ | ---------------------------------------------------- |
-| All pointing one side          | Shoots that direction                                |
-| All pointing inward            | Only inside the ring                                 |
-| All pointing outward           | Only outside the ring — no effect inside             |
-| Opposed (some in, some out)    | Only _on_ the ring itself (floating drops)           |
-
-**Documented, effect not yet described.** Real names, no known behaviour. Model
-them; do not invent what they do.
-
-`Cool · Strengthen · Sights Set · Entwine · Sign of Wind · Aeriforms Defined · Glaives`
+> **Repetition is no longer a sign.** "As of the bonus from Volume 12, the
+> status of repetition has been retconned from that of a sign to a sigil." It
+> lives in §2.2.
 
 #### Unofficially named
 
 Fan-reconstructed by comparing spells. Plausible, not established.
 
-| Sign          | Effect                                                                                                                                              |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Window**    | Restricts the spell to affecting only the object it is drawn on                                                                                     |
-| **Diamond**   | Restricts the spell to affecting only nearby objects, not the object it is drawn on                                                                 |
-| **Enlarge**   | Grows objects (corners out) or shrinks them (corners in). Window vs Diamond decides self vs nearby. Goes in the centre                               |
-| **Crosshair** | From rainflinger. Three candidate functions: erase things of the same magic aspect, restrict manifestation to inside matching objects, or define an area of effect |
-| **Radial**    | From snugstone. Likely weakens the spell — turns fire into gentle heat                                                                              |
-| **Bolt**      | Manifests magic as bolt-like projectiles. With region to aim it, fires at dangerous speed                                                            |
-| **Eye**       | Appears with vision in gathering shadows and the makeover mask. Related to illusion and light manipulation. Never seen alone, so its solo effect is unknown |
-| **Vision**    | Relates to sight and visual perception. With eye, creates illusions; without eye (Qifrey's glasses), aids sight. **Can take the place of a sigil**   |
-| **Bend**      | Appears in gathering shadows, petrification, and possibly wall bend. Common theme is bending or altering reality — vision, physical objects, or reality itself |
-| **Rain**      | Produces the sigil's magic as rainfall over the immediate area. Surrounds the central sigil                                                          |
-| **Puppet**    | Lets a user control the movement of the object the spell is drawn on, apparently by mind. Movement type depends on the sigil — wind puppet spells only move through air |
+| Sign | Class | Effect |
+| --- | --- | --- |
+| **Collection** | directional or semi | Collects material from above and around the seal. Open side faces inward |
+| **Billow** | non-directional | Turns available material into a cloud. **Can take the place of a sigil** |
+| **Diamond** | non-directional | Affects only *nearby* objects, not the one the spell is drawn on |
+| **Selection** | non-directional | Affects only the object the spell *is* drawn on — the mirror of diamond |
+| **Enlarge** | semi | Grows the spell (corners out) or shrinks it (corners in) |
+| **Crosshair** | directional | Targets whatever the sign's shorter ends point at |
+| **Bolt** | non-directional | Manifests magic as bolt-like projectiles that shoot up |
+| **Rain** | semi | Produces the sigil's magic as rainfall over the area. Surrounds the central sigil |
+| **Orb** | non-directional | A spherical space above the seal where material collects. Fills bottom-up, still under gravity, and only from material added directly |
+| **Purify** | **asymmetric** | Separates impurities out of the sigil's magic |
+| **Link** | semi | Links magic between the object it is drawn on and everything broken off, removed from, or made of the same original object |
+| **Stillness** | — | Holds a magical effect static in one place |
+| **Projection** | — | Projects an effect outward. Likely only images the spell specifies |
+| **Launch** | — | Generates the target in the direction it points, in a powerful short-lived burst |
 
-Named, effects not yet documented: `Bind · Orb · Link`
+**Region's four cases.** Computed from where _all_ region signs point
+collectively, not from any one sign:
 
-#### Decorative
+| Arrangement | Where the magic manifests |
+| --- | --- |
+| All pointing one side | Shoots that direction |
+| All pointing inward | Only inside the ring |
+| All pointing outward | Only outside the ring — no effect inside |
+| Opposed (some in, some out) | Only _on_ the ring itself (floating drops) |
 
-No mechanical effect. Model them, give them zero behaviour.
+**Three signs can stand in for a sigil**: Stability/Level Planes, Billow, and
+— before its retcon — Repetition. A glyph whose centre holds one of these and
+no sigil is a legal spell.
 
-| Sign             | Effect                                                                                                       |
-| ---------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Bird**         | Projects a bird made of the glyph's magic that flies around. Sigil goes in its centre                         |
-| **Animal Signs** | Zozah Peninsula animal shapes. No practical utility; use is declining, hobby and decoration only              |
+> There is no "decorative" tier of signs. What used to be filed there — bird,
+> animal shapes — are **decorative sigils** (§2.2), retconned in Chapter 78.
 
-### 2.4 Ring and structural rules
+### 2.4 Balance, size and tilt
 
-These are the _interesting_ ones. Each becomes a real rule in our engine.
+The mechanic that makes signs a physical system rather than a list of flags.
+All of it is on the Magic page, and none of it was in earlier drafts of this
+file.
 
-1. **Everything must be inside the ring, or connecting to it.** Every sigil and
-   sign must be drawn inside the ring or touching it; anything else does not
-   count toward the spell. Note the _connecting to_ clause — containment cannot
-   be a pure point-in-circle test.
+**A sign's size is its power.**
+
+> "The seal on the left has column signs which are all the same size, and as
+> such, the same power. This results in a balanced spell that shoots straight
+> up. Conversely, the seal on the right has one column sign which is far longer
+> than the others. This longer sign has more power, causing uneven pressure
+> which makes the spell shoot off to the side."
+
+So a seal is a set of vectors: each sign contributes a push whose magnitude is
+its size and whose direction comes from its placement and rotation. Sum them.
+A zero sum shoots straight; a non-zero sum shoots off toward the heavier side.
+
+> "Oftentimes, adding more signs to a spell can help to average them out,
+> resulting in a more balanced result."
+
+More signs of the same size average toward zero, which is why real seals are
+crowded.
+
+**Best practice is bilateral symmetry.**
+
+> "When making seals, it is generally best practice to maintain at least
+> bilateral symmetry to maintain spell stability."
+
+**Tilting signs makes the spell spin, and costs reach.**
+
+> "By tilting the signs within a seal, it is possible to produce a spell that
+> rotates. The more tilted the signs, the more spin but less reach the spell
+> will have."
+
+A real tradeoff with a knob: tilt trades reach for spin, continuously. This is
+the single richest mechanic in the source and it falls straight out of a field
+we already have — a sign's `orientation` relative to its `placement`.
+
+**What size means depends on the class** (§2.3), and this is a real branch, not
+a nuance:
+
+- **Directional** — size changes power *and* direction. "Increasing the length
+  of the sign will apply additional pressure or power in a given direction."
+  This is the case that steers a spell sideways.
+- **Semi-directional** — "Changing their size will only alter the strength of
+  their effect, not direction." Size is a scalar here, and contributes nothing
+  to `Balance`.
+- **Non-directional** — strength only, and they cannot be reversed at all.
+
+So `balance` must weight by size only for signs whose class puts them in the
+first group. A seal of six equal crush signs and one enormous one is *strong*,
+not *lopsided*.
+
+**Tilt is confirmed by Pulling, not just by the general rule.**
+
+> "When pointed inwards at an angle, the spell will have both a pulling and
+> twisting effect, and it's likely that if rotated a full 90 degrees, the spell
+> will just twist without pulling."
+
+A quarter turn converts pull entirely into twist. That is exactly a
+`cos`/`sin` split of one push, which is why §2.6 lists the exchange rate as
+*derived* rather than invented — canon gives both endpoints and the direction
+of travel between them.
+
+**Count matters too, separately from size.** "The amount of signs will affect
+the range or quantity of magic generated for a spell." So a seal has three
+independent knobs: how many signs, how big each is, and how far each is tilted.
+
+### 2.5 Ring and structural rules
+
+Each becomes a real rule in our engine.
+
+1. **Everything must be inside the ring, or connecting to it.** "All sigils and
+   signs in a spell must be drawn within or somehow connecting to a spell's
+   outer ring. If they are not, they won't contribute towards the effect of the
+   spell." Note the _connecting to_ clause — containment cannot be a pure
+   point-in-circle test.
+
+   **Glaives are the exception**: "Unlike any other known sign, glaives can be
+   drawn outside of the ring as long as they are still connected to it." So
+   *connecting to* is not a courtesy for sloppy drawing — for one mark it is
+   the normal way to draw it.
 
 2. **A spell activates only when its ring is complete.** Leaving a gap prepares
    a spell to be fired later by closing it.
@@ -252,23 +412,34 @@ These are the _interesting_ ones. Each becomes a real rule in our engine.
    glowstone path).
 
 4. **Nesting.** Wrap a spell in a second ring and fill the gap between them
-   with another spell to combine both effects — even across separate objects.
-   Whether nested spells activate simultaneously or only when the outermost
-   ring closes is **unclear in canon**. Model the ambiguity explicitly rather
-   than picking one.
+   with another spell to combine both effects — on the same object or across
+   separate ones. **The activation order is settled**: "In nested glyphs, the
+   inner ring will only activate if the outer ring is completed, even if there
+   is no gap in the inner ring." The outermost ring gates everything inside it.
+   The *mechanism* remains unknown — "seals can somehow tell whether or not
+   they're surrounded by an incomplete ring" — but the behaviour is not in
+   doubt, and we no longer model it as ambiguous.
 
 5. **Linked spells.** Two glyphs joined by a line link their effects. Identical
-   or similar linked glyphs amplify each other — several small linked copies
-   can beat one large spell of the same total area.
+   or similar linked glyphs amplify each other — "when several small, identical
+   seals are linked together, their combined strength will often be more than
+   would be possible for a single large spell that took up the same amount of
+   space".
 
 6. **Reversed signs invert their effect.** A normal spell and its reversed twin
-   cancel out completely.
+   cancel out completely. Some forbidden spells are exempt, for unknown reasons.
 
 7. **Symmetry.** Signs are usually arranged in radial or bilateral symmetry.
-   Asymmetric spells are perfectly valid but sometimes unstable.
+   Asymmetric spells are valid but unstable — see §2.4 for what instability
+   actually does.
 
-8. **Quality is geometric.** Larger seals are stronger. Neater seals last
-   longer.
+8. **Quality is geometric.** "The size and precision of a seal have a strong
+   effect on the quality of a spell: larger seals are more powerful than
+   smaller ones, and neatly drawn seals are more stable and long-lasting than
+   messy ones."
+
+9. **A bare ring is an explosion.** §2.1. The empty case is not the trivial
+   case.
 
 **Nothing above constrains drawing _order_.** Canon never says the ring comes
 first, and rules 2 and 3 both describe seals whose contents exist before the
@@ -281,7 +452,7 @@ So the engine never enforces an order, and never rejects a stroke for arriving
 too early. It also never _forbids_ ring-first — both orders, and every order in
 between, produce the same glyph. See §3.3 for what that requires of the types.
 
-### 2.5 What we invent (clearly marked, not canon)
+### 2.6 What we invent (clearly marked, not canon)
 
 Canon never explains _why_ magic works — it's a hard system with defined
 components but no underlying mechanism. So the following is **our extension**,
@@ -292,16 +463,28 @@ and we should be honest about that in the README:
   velocity, and density fields.
 - **Continuous physics.** Canon spells are discrete effects. Ours run in a
   simulation with gravity, heat transfer, and phase change.
+- **Numbers for the qualitative rules.** Canon says a seal that is not circular
+  enough fizzles, and that a longer sign has more power. It gives no
+  thresholds. Every constant we pick — `min_quality`, how much lean counts as
+  unbalanced — is ours, and must be marked as ours where it lives.
 
-Two things that are _not_ on this list, though we once thought they were:
+Three things that are _not_ on this list, though earlier drafts said they were:
 
-- **Rotation is canon.** Whorling Winds manipulates air through rotation. We do
-  not need to invent a rotate modifier, and we must not — rotation lives on the
-  sigil.
+- **Rotation is canon on both sides.** Whorling Wind rotates as an element, and
+  §2.4's sign tilt rotates as a modifier. The claim that "rotation lives on the
+  sigil, so we must not have a rotate modifier" was wrong: tilt *is* the
+  modifier, and it is already expressible as a sign's orientation relative to
+  its placement.
+- **The spin/reach exchange rate is derived, not invented.** Pulling at a right
+  angle "will just twist without pulling", and at an intermediate angle does
+  both. Two endpoints and a monotone path between them is a `cos`/`sin` split
+  of one vector. We chose the smooth curve; canon chose the endpoints.
+- **Sign power is canon.** Size means power, and unbalanced sizes steer the
+  spell. We are reading the Magic page, not inventing a physics.
 - **The capability model in §3 is derived, not invented.** `can_create` /
   `can_move` fall straight out of the wiki's own wording: wind moves air but
   cannot create it, aeriforms creates air but cannot move it, earth manipulates
-  but never creates. We are reading canon, not extending it.
+  but never creates.
 
 Rule of thumb: **canon defines the grammar, we define the semantics.** Never
 break a canon rule for convenience — they're better constraints than anything
@@ -316,9 +499,11 @@ Live in `magic-core`. Do not let Bevy types leak into these.
 ```
 SigilId     ← names a sigil in sigils.ron
 SignId      ← names a sign in signs.ron
-Sign        ← SignId + placement + orientation + reversed
+Sign        ← SignId + placement + orientation + size + reversed
+Glaive      ← neither sign nor sigil (§2.1); how deeply a spell embeds
 Ring        ← center, radius, closed: bool, quality: f32
-Glyph       ← one spell (optional sigil + signs + ring + nesting + links)
+Glyph       ← one spell (optional sigil + signs + glaives + ring + nesting + links)
+Balance     ← the vector sum of a sign set: where the spell will actually go
 Catalog     ← the .ron files, parsed and cross-checked
 Spell       ← compiled Glyph + warnings, ready to run
 ```
@@ -338,8 +523,12 @@ So the split is **schema in code, content in data**:
   newtypes over `String`, and `Catalog` is the only thing that maps an id to
   behaviour.
 
-Since a sigil's size and position are canonically irrelevant (§2.2), neither
-belongs on the type, and the recognizer must not feed them in.
+A sigil's **position** never matters, and its **shape** is the only thing the
+recognizer may score on (§2.2). Its **size** is different: it does not change
+what the sigil does, but the size of a sigil *relative to its ring* sets the
+spell's intensity. So scale is divided out for matching and kept alongside —
+`Cloud::scale` and `RingContents::extent` exist for exactly this, and nothing
+downstream could recover either if they were dropped.
 
 ### 3.2 Capabilities — the most valuable thing in the research
 
@@ -359,10 +548,26 @@ constraint, so it goes in early, not as polish.
 ### 3.3 What each type needs
 
 - **`Sign`** needs `orientation` and a `reversed` flag — rules 6 and 7 are
-  meaningless without them — plus a **`placement`**: the angle it sits at around
-  the ring. Inward and outward are questions about direction _relative to
-  position_, so the same sign at the top and at the bottom of a ring means
+  meaningless without them — plus a **`placement`**, the angle it sits at
+  around the ring. Inward and outward are questions about direction _relative
+  to position_, so the same sign at the top and at the bottom of a ring means
   different things. Rule 1's containment test needs the position too.
+- **`Sign` also needs `size`.** §2.4: a sign's size *is* its power, and one
+  sign longer than its neighbours steers the whole spell sideways. Without it
+  `arrangement.rs` can measure symmetry of position and never symmetry of
+  power, which is the half that decides where the magic goes. Recorded in the
+  same units as the ring's radius, so the two are comparable.
+- **Balance is a function over the sign set, not a per-sign property.** Each
+  sign is a vector: magnitude from `size`, direction from `placement` and
+  `orientation`. Their sum is where the spell shoots. Zero is balanced; adding
+  more equal signs drives it toward zero, exactly as the wiki describes.
+- **Tilt is `orientation` measured against `placement`**, and it buys spin at
+  the cost of reach (§2.4). The type already carries both angles; what is
+  missing is only the reading of them. **No rotate sign should ever be added** —
+  not because rotation is not a modifier, but because tilt already is one.
+- **Glaives are their own kind.** Not a `SignId`, not a `SigilId`. They sit in
+  their own list on `Glyph` and answer one question: how firmly the spell
+  embeds in a body.
 - **Tier and substitution live in the data**, not on the type. `Catalog` answers
   whether a sign is decorative and whether it can stand in for a sigil.
 - **Region analysis** is a function over the whole sign set, not a per-sign
@@ -377,7 +582,15 @@ constraint, so it goes in early, not as polish.
   (`Radial | Bilateral | Asymmetric`, rule 7), and a stability flag that
   asymmetry sets **without** causing failure.
 - **`Glyph.sigil` is `Option`** — §2.1. A sigil-less glyph driven by repetition,
-  billow, or vision compiles fine.
+  billow, or vision compiles fine. So does one with **nothing at all** inside
+  the ring: rule 9 makes that an explosion, and the compiler must return that
+  spell rather than an empty one.
+- **Decorative sigils are sigils** (§2.2), so they need no new type — a
+  `Family::Decorative` and the ordinary `SigilId` cover them. Their three
+  effects (sculpt, target, restrict) are `caps`-like data, and their two
+  structural oddities are not yet modelled: that they decompose into body parts,
+  and that Flower takes five modifier symbols of its own. Both are honest holes
+  until a spell needs them.
 - **Glyph assembly is geometric, never chronological.** Grouping strokes into a
   glyph is a query over the finished pad — find the closed loops, take
   everything each one contains or touches (rule 1), classify the rest. Stroke
@@ -387,9 +600,12 @@ constraint, so it goes in early, not as polish.
 - **Strokes belonging to no ring are inert, not invalid.** They stay on the pad
   unclassified. A player halfway through a seal has drawn nothing wrong.
 - **Quality** is an `f32` derived from stroke neatness, on everything — rule 8.
-- **Compilation returns a spell _plus warnings_.** Unstable is not an error.
-  Nesting activation order is canonically undecided (rule 4), so that ambiguity
-  is represented in the type, not resolved by a coin flip.
+- **Nesting is decided, and the type should say so.** Rule 4: the outermost
+  ring gates every ring inside it. An inner ring with no gap still waits on the
+  outer one. This was modelled as an ambiguity in earlier drafts; it is not one.
+- **Compilation returns a spell _plus warnings_.** Unstable is not an error. An
+  asymmetric seal compiles and carries a warning saying which way it will
+  drift, computed from `Balance`.
 
 ---
 
@@ -447,7 +663,7 @@ He will run them hundreds of times. Keep them fast.
 | Recognition is stroke-order-invariant                                  | $P's whole point                      |
 | Reversing a stroke doesn't change the match                            | Same                                  |
 | `compile(a) == compile(b)` when a and b are the same glyph drawn twice | Determinism                           |
-| The same seal compiles identically drawn ring-first and ring-last      | §2.4 — order is never an input         |
+| The same seal compiles identically drawn ring-first and ring-last      | §2.5 — order is never an input         |
 | A spell + its reversed twin produce zero net effect                    | Canon rule 6                          |
 | An open ring never produces effects                                    | Canon rule 2                          |
 | Closing a split ring produces the same spell as drawing it whole       | Canon rule 3                          |
@@ -488,8 +704,8 @@ atelier/
 │       │   ├── sim/          particles, fields, reactions
 │       │   └── tests/        one file per module above — see §5
 │       └── the-magic-assets/
-│           ├── sigils.ron    13 sigils + capabilities
-│           ├── signs.ron     35 signs, three canon tiers
+│           ├── sigils.ron    34 sigils + capabilities
+│           ├── signs.ron     44 signs, three canon tiers
 │           └── spells.ron    13 spell fixtures + 7 edge cases
 └── apps/
     └── canvas/           Bevy shell
@@ -559,6 +775,49 @@ piece of work.
 **Current task:** M5.1 — compile a `Glyph` from the rings and contents the
 recognizer now produces. Blocked on nothing in code; blocked in practice on
 `templates.ron`, which is empty until the rune shapes are traced.
+
+**Canon rework, after reading the wiki first-hand.** WebFetch gets 402 from
+telepedia; the pages open fine through the browser, and §2 is now written from
+the real Magic, Sigils Explained and Signs Explained rather than from search
+snippets. What changed:
+
+- **Decorative sigils are sigils, and they have effects.** Retconned from
+  signs in Chapter 78. Fifteen of them, each able to sculpt a spell into its
+  shape, target other spells built from the same sigil, and restrict a spell to
+  that shape's real counterparts. `bird` and `animal_signs` are gone from
+  `signs.ron`; `Family::Decorative` and fifteen entries are in `sigils.ron`.
+- **Repetition was retconned sign → sigil** in the volume 12 bonus, so it is no
+  longer in `signs.ron` at all.
+- **`Sign` gained `size`, because size is power.** Canon: identical column
+  signs give "the same power… a balanced spell that shoots straight up", one
+  longer sign "has more power, causing uneven pressure which makes the spell
+  shoot off to the side". `arrangement::balance` sums the sign set into where
+  the spell will actually go, and `spin` reads the tilt/reach tradeoff.
+- **Only directional signs steer.** For semi-directional signs "changing their
+  size will only alter the strength of their effect, not direction", and
+  non-directional ones cannot be inverted at all. `balance` and `spin` take a
+  predicate saying which signs steer.
+- **The spin/reach split is derived, not invented.** Pulling at a right angle
+  "will just twist without pulling" — canon gives both endpoints, we chose the
+  smooth curve between them.
+- **Glaives are the exception to rule 1** — the only mark that may be drawn
+  outside the ring, so long as it still connects. And per Engendale they are
+  "not technically signs" but an older technique.
+- **A bare ring is an explosion** (rule 9), and **nesting is no longer
+  ambiguous** — the outermost ring gates every ring inside it.
+- **Both vocabularies now cover everything the wiki names.** 34 sigils against
+  32 named, 44 signs against 40 headings. The extras are older fan names the
+  current pages have dropped — `unburning_flames`, `stop`, `bend`, `eye`,
+  `vision`, `radial`, `float` — kept because spell fixtures reference some of
+  them, and each marked in the data as unlisted rather than passed off as
+  canon. `every_sign_the_wiki_names_is_in_the_catalogue` walks the wiki's own
+  table of contents, so a sign going missing surfaces there rather than as a
+  spell that silently cannot be built.
+- **`window` was renamed `selection`.** Canon's Windows is a *portal* sign that
+  lines the seal as a second ring; what we had called `window` is Selection,
+  which restricts a spell to the object it is drawn on. Leaving the old name
+  would have collided head-on. The rename turned up a dangling reference from
+  `enlarge`, which the catalogue's cross-check caught at load.
 
 **Where M4.1 landed:**
 

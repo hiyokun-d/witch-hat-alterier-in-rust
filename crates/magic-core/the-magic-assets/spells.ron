@@ -57,7 +57,7 @@
       id: "floating_expansion",
       category: "Niche",
       sigil: None,
-      signs: [("enlarge", Center), ("window", Center), ("float", Around)],
+      signs: [("enlarge", Center), ("selection", Center), ("float", Around)],
       effect: "Grows the object the seal is drawn on.",
       test_note: "Differs from spell_of_reduction ONLY by window vs diamond
                   and by enlarge orientation. If our compiler can't
