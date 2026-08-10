@@ -5,6 +5,7 @@ use magic_core::Point;
 
 mod debug;
 mod shortcuts;
+mod ui;
 
 use shortcuts::{TapCounter, clear, clear_all, command_held, redo, undo};
 
@@ -168,6 +169,9 @@ fn main() {
         }))
         // Scaffolding. Delete this line and `mod debug;` and nothing breaks.
         .add_plugins(debug::DebugOverlayPlugin)
+        // Ways to build a seal without drawing one. Same deal — delete this
+        // line and `mod ui;` and the pen still works.
+        .add_plugins(ui::ToolbarPlugin)
         .insert_resource(ClearColor(DESK))
         .init_resource::<InkPad>()
         .init_resource::<PaperShape>()
@@ -179,7 +183,9 @@ fn main() {
         .add_systems(
             Update,
             (
-                capture_stroke,
+                // Not while the pointer is over a button: a click on the
+                // toolbar must not also land a blot of ink underneath it.
+                capture_stroke.run_if(ui::pointer_free),
                 keyboard_shortcut,
                 draw_ink,
                 place_credit,

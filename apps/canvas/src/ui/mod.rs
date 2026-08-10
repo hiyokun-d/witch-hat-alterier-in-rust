@@ -1,23 +1,39 @@
-//! The toolbar: everything you can do to the pad without drawing it.
+//! The tool panel: everything you can do to the pad without drawing it.
 //!
 //! Drawing a clean ring by hand is a skill, and needing that skill before the
-//! engine will do anything is a bad way to build the engine. These tools stamp
+//! engine will do anything is a bad way to build the engine. These tools place
 //! exact ink, lay down guides to draw along, and switch the overlays on and
 //! off — so a seal can be assembled and compiled by someone who cannot draw a
 //! circle, and so a bug can be reproduced from a button instead of a steady
 //! hand.
 //!
+//! # How it feels to use
+//!
+//! Pick a shape, then put it somewhere. Clicking `ring` does not stamp a ring;
+//! it *arms* one. The pad then behaves like the shape tool in any drawing
+//! program:
+//!
+//! - **click** — places it where you clicked, at the current radius
+//! - **drag** — the press point is the centre and the distance is the radius,
+//!   with a live preview of exactly what will land
+//! - **Escape**, or picking `pen` — back to drawing by hand
+//!
+//! Arming rather than stamping is what makes the panel feel like a tool
+//! instead of a vending machine: the same button can produce a ring anywhere,
+//! at any size, and you can see it before you commit.
+//!
 //! # Adding a tool
 //!
 //! Two edits, both in this directory:
 //!
-//! 1. Add a [`Tool`] to [`TOOLS`] below, naming a [`Toggle`] or a [`Command`].
-//! 2. Give it behaviour — a field on [`ToolState`] for a toggle, or an arm in
-//!    [`run`] for a command.
+//! 1. Add a [`Tool`] to [`TOOLS`] below, naming a [`Mode`], [`Toggle`] or
+//!    [`Command`].
+//! 2. Give it behaviour — a variant of [`Shape`] and an arm in
+//!    [`stamp::draw_shape`], a field on [`ToolState`], or an arm in [`run`].
 //!
-//! Nothing else needs touching. The bar lays itself out from `TOOLS`, so a new
-//! entry appears, wraps onto a second row if it must, and becomes clickable
-//! without any layout work.
+//! Nothing else needs touching. The panel lays itself out from `TOOLS`, so a
+//! new entry appears in its section, moves everything below it down, and
+//! becomes clickable without any layout work.
 //!
 //! # What lives where
 //!
@@ -25,15 +41,16 @@
 //! | --- | --- |
 //! | `mod.rs` | the plugin, [`ToolState`], the tool table, what a click does |
 //! | `bar.rs` | where the buttons are, how they draw, hit-testing |
+//! | `place.rs` | pick-then-place: the drag, the preview, the commit |
 //! | `guides.rs` | the helper lines you draw along |
-//! | `stamp.rs` | generating exact ink and putting it on the pad |
+//! | `stamp.rs` | generating exact ink |
 //!
 //! # Why not `bevy_ui`
 //!
 //! The shell pulls in `2d`, `bevy_text` and a default font, and nothing else.
-//! A row of rectangles hit-tested against the cursor needs none of the layout
-//! engine, and the overlay already proves the pattern works. If the toolbar
-//! ever grows scrolling or text entry, that is the moment to reconsider.
+//! A column of rectangles hit-tested against the cursor needs none of the
+//! layout engine, and the overlay already proves the pattern works. If the
+//! panel ever grows scrolling or text entry, that is the moment to reconsider.
 
 use bevy::prelude::*;
 
@@ -42,32 +59,59 @@ use crate::shortcuts;
 
 pub mod bar;
 pub mod guides;
+pub mod place;
 pub mod stamp;
 
-/// Everything the toolbar can switch on and off.
+/// A shape the panel can place for you.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shape {
+    /// A closed ring. Its ends meet exactly, so it reads as `Active` the
+    /// moment it lands — which a hand-drawn ring almost never does.
+    Ring,
+    /// A ring with a deliberate hole. Canon rule 2's prepared spell.
+    Arc,
+    /// Two crossed strokes to put *inside* a ring. Not a canon sigil, and not
+    /// pretending to be — see [`stamp::cross`].
+    Cross,
+}
+
+/// What the pad does with a press.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// Ink follows the pen. The default, and what Escape returns to.
+    #[default]
+    Pen,
+    /// A shape is armed, waiting to be clicked or dragged into place.
+    Place(Shape),
+}
+
+/// Everything the panel can switch on and off.
 ///
 /// A plain resource of flags rather than a signal to each feature, because the
-/// bar has to *show* the current state as well as change it, and one place
+/// panel has to *show* the current state as well as change it, and one place
 /// holding the truth is the only way those two cannot disagree.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct ToolState {
-    /// Whether the bar itself is showing. Tab, or the handle at the left.
-    pub bar: bool,
-    /// The debug overlay. Read by `debug.rs`, which ANDs it with its own F1.
+    /// Whether the panel is showing. Tab, or the handle at the top.
+    pub open: bool,
+    /// What a press on the pad means right now.
+    pub mode: Mode,
+    /// The debug overlay. Read by `debug.rs`, which falls back to its own F1.
     pub debug_overlay: bool,
     /// Guide rings and spokes to draw along.
     pub guides: bool,
-    /// Radius the stamps are laid down at.
+    /// Radius a click places at, and the size a drag leaves behind.
     pub stamp_radius: f32,
-    /// Size of the hole a stamped arc leaves, in degrees.
+    /// Size of the hole a placed arc leaves, in degrees.
     pub stamp_gap: f32,
 }
 
 impl Default for ToolState {
     fn default() -> Self {
         ToolState {
-            // Open on first run: a toolbar nobody knows about helps nobody.
-            bar: true,
+            // Open on first run: a panel nobody knows about helps nobody.
+            open: true,
+            mode: Mode::Pen,
             debug_overlay: true,
             guides: false,
             stamp_radius: 140.0,
@@ -76,13 +120,13 @@ impl Default for ToolState {
     }
 }
 
-/// Least and most a stamp may be, and how much a nudge moves it.
-const RADIUS_RANGE: (f32, f32) = (30.0, 400.0);
+/// Least and most a placed shape may be, and how much a nudge moves it.
+pub const RADIUS_RANGE: (f32, f32) = (24.0, 460.0);
 const RADIUS_STEP: f32 = 20.0;
 const GAP_RANGE: (f32, f32) = (0.0, 180.0);
 const GAP_STEP: f32 = 10.0;
 
-/// Where the pointer is, and whether the toolbar has claimed it.
+/// Where the pointer is, and whether the panel has claimed it.
 ///
 /// Recomputed before capture every frame so a click on a button never also
 /// lands a blot of ink underneath it.
@@ -92,17 +136,19 @@ pub struct Pointer {
     pub over_ui: bool,
 }
 
-/// Run condition: the pointer is over the pad rather than over a button.
+/// Run condition: a press right now means ink.
 ///
-/// `main.rs` gates `capture_stroke` on this.
-pub fn pointer_free(pointer: Res<Pointer>) -> bool {
-    !pointer.over_ui
+/// False over a button, and false whenever a shape is armed — in that mode the
+/// pad belongs to [`place`], and letting both have the press would leave a
+/// scribble under every placed ring. `main.rs` gates `capture_stroke` on this.
+pub fn pointer_free(pointer: Res<Pointer>, tools: Res<ToolState>) -> bool {
+    !pointer.over_ui && tools.mode == Mode::Pen
 }
 
 /// A flag a button flips.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toggle {
-    Bar,
+    Panel,
     Debug,
     Guides,
 }
@@ -110,9 +156,6 @@ pub enum Toggle {
 /// A one-shot a button fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    StampRing,
-    StampArc,
-    StampCross,
     Bigger,
     Smaller,
     WiderGap,
@@ -127,6 +170,8 @@ pub enum Command {
 /// What a button does when clicked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
+    /// Arms something. Lights up while it is what the pad will do.
+    Pick(Mode),
     Toggle(Toggle),
     Run(Command),
 }
@@ -134,128 +179,159 @@ pub enum Action {
 /// One button.
 #[derive(Debug, Clone, Copy)]
 pub struct Tool {
-    /// What the button says. Kept short — the bar sizes itself off these.
+    /// Which block of the panel it belongs to. A new name starts a new block.
+    pub section: &'static str,
+    /// What the button says. Kept short — the panel sizes itself off these.
     pub label: &'static str,
     /// One line of what it does, shown when the pointer is over it.
     pub hint: &'static str,
     pub action: Action,
 }
 
-/// Every button on the bar, in the order they appear.
+/// Every button on the panel, top to bottom.
 ///
-/// Grouped by what they act on: ink first, because that is why the bar exists;
-/// then the size of what gets stamped; then the pad; then the overlays.
+/// Order is the layout: entries are drawn in this sequence and a change of
+/// `section` starts a new block with a heading.
 pub const TOOLS: &[Tool] = &[
     Tool {
+        section: "place",
+        label: "pen",
+        hint: "draw by hand  (Esc)",
+        action: Action::Pick(Mode::Pen),
+    },
+    Tool {
+        section: "place",
         label: "ring",
-        hint: "a perfect closed ring — activates on its own",
-        action: Action::Run(Command::StampRing),
+        hint: "click or drag out a closed ring — fires on its own",
+        action: Action::Pick(Mode::Place(Shape::Ring)),
     },
     Tool {
+        section: "place",
         label: "arc",
-        hint: "a ring with a deliberate hole — canon rule 2's prepared spell",
-        action: Action::Run(Command::StampArc),
+        hint: "a ring with a hole — drag to aim the hole. Rule 2's prepared spell",
+        action: Action::Pick(Mode::Place(Shape::Arc)),
     },
     Tool {
+        section: "place",
         label: "cross",
-        hint: "two strokes inside the ring, standing in for a sigil",
-        action: Action::Run(Command::StampCross),
+        hint: "two strokes to put inside a ring, standing in for a sigil",
+        action: Action::Pick(Mode::Place(Shape::Cross)),
     },
     Tool {
+        section: "size",
         label: "radius +",
-        hint: "stamp bigger — canon rule 8, larger seals are stronger",
+        hint: "place bigger — canon rule 8, larger seals are stronger",
         action: Action::Run(Command::Bigger),
     },
     Tool {
-        label: "radius -",
-        hint: "stamp smaller",
+        section: "size",
+        label: "radius −",
+        hint: "place smaller",
         action: Action::Run(Command::Smaller),
     },
     Tool {
+        section: "size",
         label: "gap +",
         hint: "widen the hole an arc leaves",
         action: Action::Run(Command::WiderGap),
     },
     Tool {
-        label: "gap -",
+        section: "size",
+        label: "gap −",
         hint: "narrow the hole — take it to zero and the arc closes",
         action: Action::Run(Command::NarrowerGap),
     },
     Tool {
+        section: "pad",
         label: "undo",
         hint: "lift the last stroke off the pad  (⌘Z)",
         action: Action::Run(Command::Undo),
     },
     Tool {
+        section: "pad",
         label: "redo",
         hint: "put it back  (⇧⌘Z)",
         action: Action::Run(Command::Redo),
     },
     Tool {
+        section: "pad",
         label: "clear",
         hint: "empty the pad, recoverably  (⌘⌫)",
         action: Action::Run(Command::Clear),
     },
     Tool {
+        section: "pad",
         label: "wipe",
         hint: "empty the pad and its history  (⇧⌘⌫)",
         action: Action::Run(Command::ClearAll),
     },
     Tool {
+        section: "pad",
         label: "paper",
         hint: "full sheet or a round one  (F three times)",
         action: Action::Run(Command::SwapPaper),
     },
     Tool {
+        section: "view",
         label: "guides",
         hint: "rings and spokes to draw along",
         action: Action::Toggle(Toggle::Guides),
     },
     Tool {
+        section: "view",
         label: "debug",
         hint: "the measurement overlay  (F1)",
         action: Action::Toggle(Toggle::Debug),
     },
 ];
 
-/// Adds the toolbar. Remove this line and `mod ui;` and drawing still works —
-/// everything here is a convenience over things the keyboard already does.
+/// Adds the tool panel. Remove this line and `mod ui;` and drawing still
+/// works — everything here is a convenience over things the pen already does.
 pub struct ToolbarPlugin;
 
 impl Plugin for ToolbarPlugin {
     fn build(&self, app: &mut App) {
+        guides::setup(app);
+
         app.init_resource::<ToolState>()
             .init_resource::<Pointer>()
+            .init_resource::<place::Placing>()
             .add_systems(Startup, bar::spawn)
             .add_systems(
                 Update,
-                // Before capture, so a click that lands on a button is known to
-                // be a button press before the pad gets a chance to ink it.
-                (bar::track_pointer, bar::click, toggle_with_keyboard)
+                // Before capture, so a press that lands on a button — or on the
+                // pad with a shape armed — is claimed before the pad inks it.
+                (bar::track_pointer, bar::click, place::drag, keyboard)
                     .chain()
                     .before(crate::capture_stroke),
             )
             .add_systems(
                 Update,
-                (bar::layout, bar::draw, guides::draw).after(crate::capture_stroke),
+                (bar::layout, bar::draw, guides::draw, place::preview).after(crate::capture_stroke),
             );
     }
 }
 
-/// Tab shows and hides the bar.
+/// Tab shows and hides the panel; Escape puts the pen back in your hand.
 ///
-/// Bare, like `F` for the paper, and deliberately not a ⌘ chord: the bar is
-/// something you flick away while drawing, not a command.
-fn toggle_with_keyboard(keys: Res<ButtonInput<KeyCode>>, mut tools: ResMut<ToolState>) {
-    if keys.just_pressed(KeyCode::Tab) && !shortcuts::command_held(&keys) {
-        tools.bar = !tools.bar;
+/// Both bare, like `F` for the paper, and deliberately not ⌘ chords: these are
+/// things you reach for mid-drawing, not commands.
+fn keyboard(keys: Res<ButtonInput<KeyCode>>, mut tools: ResMut<ToolState>) {
+    if shortcuts::command_held(&keys) {
+        return;
+    }
+    if keys.just_pressed(KeyCode::Tab) {
+        tools.open = !tools.open;
+    }
+    if keys.just_pressed(KeyCode::Escape) {
+        tools.mode = Mode::Pen;
     }
 }
 
 /// Carries out one button press.
 ///
 /// Everything a command does, some keyboard shortcut already did. That is on
-/// purpose — the bar is a second way in, never the only way, so nothing here
+/// purpose — the panel is a second way in, never the only way, so nothing here
 /// can become the sole route to a feature.
 pub fn run(
     command: Command,
@@ -264,22 +340,13 @@ pub fn run(
     shape: &mut crate::PaperShape,
     window: &Window,
 ) {
-    match command {
-        Command::StampRing => stamp::place(pad, stamp::ring(tools.stamp_radius)),
-        Command::StampArc => {
-            stamp::place(pad, stamp::arc(tools.stamp_radius, tools.stamp_gap));
-        }
-        Command::StampCross => {
-            // Sized against the ring rather than the window, so it lands
-            // inside whatever was stamped last and reads as its contents.
-            stamp::place(pad, stamp::cross(tools.stamp_radius * 0.45));
-        }
+    // Clamped against the sheet, not just its own range: the window can be
+    // resized and the paper swapped for a smaller round one without anyone
+    // touching the radius.
+    let room = shape.extent(window).min_element();
 
+    match command {
         Command::Bigger => {
-            // Clamped to the sheet as well as to its own range: a stamp bigger
-            // than the paper would be silently refused by `PaperShape::accepts`
-            // and look like a broken button.
-            let room = shape.extent(window).min_element();
             tools.stamp_radius =
                 (tools.stamp_radius + RADIUS_STEP).clamp(RADIUS_RANGE.0, RADIUS_RANGE.1.min(room));
         }
@@ -310,10 +377,10 @@ pub fn run(
     }
 }
 
-/// Reads a toggle's current value, so the bar can show it lit.
+/// Reads a toggle's current value, so the panel can show it lit.
 pub fn is_on(toggle: Toggle, tools: &ToolState) -> bool {
     match toggle {
-        Toggle::Bar => tools.bar,
+        Toggle::Panel => tools.open,
         Toggle::Debug => tools.debug_overlay,
         Toggle::Guides => tools.guides,
     }
@@ -322,7 +389,7 @@ pub fn is_on(toggle: Toggle, tools: &ToolState) -> bool {
 /// Flips a toggle.
 pub fn flip(toggle: Toggle, tools: &mut ToolState) {
     match toggle {
-        Toggle::Bar => tools.bar = !tools.bar,
+        Toggle::Panel => tools.open = !tools.open,
         Toggle::Debug => tools.debug_overlay = !tools.debug_overlay,
         Toggle::Guides => tools.guides = !tools.guides,
     }

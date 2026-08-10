@@ -5,6 +5,12 @@
 //! this file, the `mod debug;` line, and the `add_plugins` line in `main.rs`.
 //! Nothing else changes — the overlay only ever reads.
 //!
+//! It reads `ui::ToolState` when the toolbar is present, so the "debug" button
+//! and F1 are the same switch rather than two that can disagree. The
+//! dependency runs this way round on purpose: every use of it is an
+//! `Option<Res<..>>`, so deleting `ui/` costs two parameters here and nothing
+//! else, while deleting *this* file still costs nothing anywhere.
+//!
 //! It goes away once ink rendering shows the same information implicitly.
 
 use bevy::gizmos::config::GizmoConfigStore;
@@ -16,6 +22,7 @@ use bevy::window::WindowFocused;
 use magic_core::{assembly, circle, recognizer, stroke};
 
 use crate::shortcuts::TapCounter;
+use crate::ui::ToolState;
 use crate::{Credit, InkPad, Paper, PaperShape, cursor_world};
 
 /// Height of one text row, at the font size below.
@@ -224,7 +231,16 @@ impl Plugin for DebugOverlayPlugin {
         app.init_resource::<InputProbe>()
             .init_resource::<FrameTimes>()
             .init_resource::<OverlayVisible>()
-            .add_systems(Update, (probe_input, sample_frame_time, toggle_overlay));
+            .add_systems(
+                Update,
+                (
+                    probe_input,
+                    sample_frame_time,
+                    toggle_overlay,
+                    apply_visibility,
+                )
+                    .chain(),
+            );
 
         app.init_gizmo_group::<DebugGizmos>();
 
@@ -270,8 +286,11 @@ fn thin_gizmos(mut store: ResMut<GizmoConfigStore>) {
 }
 
 /// Run condition: is the overlay showing?
-fn overlay_visible(visible: Res<OverlayVisible>) -> bool {
-    visible.0
+///
+/// The toolbar owns the answer when it exists, so the button and F1 cannot
+/// drift apart. Without it, this file's own flag is the truth.
+fn overlay_visible(visible: Res<OverlayVisible>, tools: Option<Res<ToolState>>) -> bool {
+    tools.map_or(visible.0, |tools| tools.debug_overlay)
 }
 
 /// Every piece of text the overlay owns.
@@ -288,15 +307,32 @@ type AnyReadout = Or<(With<OverlayLine>, With<InspectorLine>)>;
 fn toggle_overlay(
     keys: Res<ButtonInput<KeyCode>>,
     mut visible: ResMut<OverlayVisible>,
-    mut lines: Query<&mut Visibility, AnyReadout>,
+    tools: Option<ResMut<ToolState>>,
 ) {
     if !keys.just_pressed(KeyCode::F1) {
         return;
     }
 
-    visible.0 = !visible.0;
+    match tools {
+        Some(mut tools) => tools.debug_overlay = !tools.debug_overlay,
+        None => visible.0 = !visible.0,
+    }
+}
+
+/// Shows and hides the text, from whichever flag is in charge.
+///
+/// Its own system rather than part of [`toggle_overlay`], because the toolbar
+/// can change the answer too and nothing here sees that keypress. Runs every
+/// frame and unconditionally — a system skipped while hidden could never
+/// un-hide itself.
+fn apply_visibility(
+    visible: Res<OverlayVisible>,
+    tools: Option<Res<ToolState>>,
+    mut lines: Query<&mut Visibility, AnyReadout>,
+) {
+    let on = tools.map_or(visible.0, |tools| tools.debug_overlay);
     for mut visibility in &mut lines {
-        *visibility = if visible.0 {
+        *visibility = if on {
             Visibility::Inherited
         } else {
             Visibility::Hidden

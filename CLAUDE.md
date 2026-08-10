@@ -497,6 +497,12 @@ atelier/
             ├── main.rs      app, InkPad, capture, paper, ink
             ├── shortcuts.rs undo / redo / clear on &mut InkPad
             ├── debug.rs     on-screen overlay — Claude's, see §0
+            ├── ui/          tool panel: place, guides, toggles
+            │   ├── mod.rs   plugin, ToolState, the TOOLS table
+            │   ├── bar.rs   panel geometry, drawing, hit-testing
+            │   ├── place.rs pick-then-place: drag, preview, commit
+            │   ├── guides.rs helper rings and spokes
+            │   └── stamp.rs generating exact ink
             └── tests/       one file per module above
 ```
 
