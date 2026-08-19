@@ -458,3 +458,15 @@ fn tilting_a_non_directional_sign_imparts_no_spin() {
     assert_eq!(found.spin, 0.0);
     assert_eq!(found.reach, 1.0);
 }
+
+#[test]
+fn an_empty_sign_set_leans_nowhere_at_all() {
+    // The overlay was printing `lean 0.00 → -180°   power -0.0` for a bare
+    // ring. A heading of -180° for a seal with no signs is noise dressed as a
+    // measurement, and a negative zero is a sign something summed backwards.
+    let b = balance(&[], |_| true);
+    assert_eq!(b.power, 0.0);
+    assert!(b.power.is_sign_positive(), "power came out as -0.0");
+    assert_eq!(b.drift, 0.0);
+    assert_eq!(b.heading, 0.0);
+}

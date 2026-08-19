@@ -60,6 +60,7 @@ use crate::shortcuts;
 pub mod bar;
 pub mod guides;
 pub mod place;
+pub mod record;
 pub mod stamp;
 
 /// A shape the panel can place for you.
@@ -73,6 +74,12 @@ pub enum Shape {
     /// Two crossed strokes to put *inside* a ring. Not a canon sigil, and not
     /// pretending to be — see [`stamp::cross`].
     Cross,
+    /// A keystone: a mark with a length and a direction, to arrange *around* a
+    /// sigil. Drag aims it; §2.4 makes both the length and the aim matter.
+    Sign,
+    /// A claw. Neither sign nor sigil, and the only mark canon lets you draw
+    /// outside the ring — place it straddling the line.
+    Glaive,
 }
 
 /// What the pad does with a press.
@@ -104,6 +111,8 @@ pub struct ToolState {
     pub stamp_radius: f32,
     /// Size of the hole a placed arc leaves, in degrees.
     pub stamp_gap: f32,
+    /// The compiled-spell readout: what the seal on the pad will actually do.
+    pub spell: bool,
 }
 
 impl Default for ToolState {
@@ -116,6 +125,7 @@ impl Default for ToolState {
             guides: false,
             stamp_radius: 140.0,
             stamp_gap: 40.0,
+            spell: true,
         }
     }
 }
@@ -151,6 +161,7 @@ pub enum Toggle {
     Panel,
     Debug,
     Guides,
+    Spell,
 }
 
 /// A one-shot a button fires.
@@ -165,6 +176,8 @@ pub enum Command {
     Clear,
     ClearAll,
     SwapPaper,
+    /// Writes the pad's non-ring strokes out as a `templates.ron` fragment.
+    Record,
 }
 
 /// What a button does when clicked.
@@ -216,6 +229,18 @@ pub const TOOLS: &[Tool] = &[
         label: "cross",
         hint: "two strokes to put inside a ring, standing in for a sigil",
         action: Action::Pick(Mode::Place(Shape::Cross)),
+    },
+    Tool {
+        section: "place",
+        label: "sign",
+        hint: "a keystone — drag to aim it and set its length. Size is power (§2.4)",
+        action: Action::Pick(Mode::Place(Shape::Sign)),
+    },
+    Tool {
+        section: "place",
+        label: "glaive",
+        hint: "a claw — how firmly the spell embeds. Straddle the ring with it",
+        action: Action::Pick(Mode::Place(Shape::Glaive)),
     },
     Tool {
         section: "size",
@@ -272,10 +297,22 @@ pub const TOOLS: &[Tool] = &[
         action: Action::Run(Command::SwapPaper),
     },
     Tool {
+        section: "pad",
+        label: "record",
+        hint: "write the rune on the pad to recorded-gesture.ron",
+        action: Action::Run(Command::Record),
+    },
+    Tool {
         section: "view",
         label: "guides",
         hint: "rings and spokes to draw along",
         action: Action::Toggle(Toggle::Guides),
+    },
+    Tool {
+        section: "view",
+        label: "spell",
+        hint: "what the seal compiles to — driver, firing, balance, warnings",
+        action: Action::Toggle(Toggle::Spell),
     },
     Tool {
         section: "view",
@@ -296,6 +333,7 @@ impl Plugin for ToolbarPlugin {
         app.init_resource::<ToolState>()
             .init_resource::<Pointer>()
             .init_resource::<place::Placing>()
+            .init_resource::<record::LastRecording>()
             .add_systems(Startup, bar::spawn)
             .add_systems(
                 Update,
@@ -339,6 +377,7 @@ pub fn run(
     pad: &mut InkPad,
     shape: &mut crate::PaperShape,
     window: &Window,
+    last: &mut record::LastRecording,
 ) {
     // Clamped against the sheet, not just its own range: the window can be
     // resized and the paper swapped for a smaller round one without anyone
@@ -374,6 +413,16 @@ pub fn run(
             };
             shortcuts::clear_all(pad);
         }
+
+        Command::Record => {
+            // The result goes on the panel rather than into a log: the point of
+            // the tool is knowing whether the file got written, and a terminal
+            // is not where anyone is looking while drawing.
+            last.0 = Some(match record::record(pad) {
+                Ok(message) => message,
+                Err(why) => format!("nothing written — {why}"),
+            });
+        }
     }
 }
 
@@ -383,6 +432,7 @@ pub fn is_on(toggle: Toggle, tools: &ToolState) -> bool {
         Toggle::Panel => tools.open,
         Toggle::Debug => tools.debug_overlay,
         Toggle::Guides => tools.guides,
+        Toggle::Spell => tools.spell,
     }
 }
 
@@ -392,5 +442,6 @@ pub fn flip(toggle: Toggle, tools: &mut ToolState) {
         Toggle::Panel => tools.open = !tools.open,
         Toggle::Debug => tools.debug_overlay = !tools.debug_overlay,
         Toggle::Guides => tools.guides = !tools.guides,
+        Toggle::Spell => tools.spell = !tools.spell,
     }
 }

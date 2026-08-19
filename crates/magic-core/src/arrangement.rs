@@ -307,24 +307,46 @@ impl Balance {
 /// An empty set is perfectly balanced with no power, which is correct: a ring
 /// with no signs shoots nowhere in particular (and, per rule 9, explodes).
 pub fn balance(signs: &[Sign], directional: impl Fn(&SignId) -> bool) -> Balance {
-    let mut x = 0.0;
-    let mut y = 0.0;
-    let mut power = 0.0;
+    // Summed in a canonical order rather than the order the signs arrived in.
+    //
+    // Float addition is not associative, so the same seal drawn sign-by-sign in
+    // two different sequences summed to two different numbers — a real §4.3
+    // determinism break, and §3.3 is explicit that stroke order is never an
+    // input. Sorting the contributions first costs nothing at these sizes and
+    // makes the answer a function of the seal alone.
+    let mut pushes: Vec<(f32, f32)> = Vec::with_capacity(signs.len());
+    let mut sizes: Vec<f32> = Vec::with_capacity(signs.len());
 
     for sign in signs {
-        power += sign.size.abs();
+        sizes.push(sign.size.abs());
         if !directional(&sign.kind) {
             continue;
         }
-
         let push = if sign.reversed { -sign.size } else { sign.size };
-        x += push * sign.orientation.cos();
-        y += push * sign.orientation.sin();
+        pushes.push((push * sign.orientation.cos(), push * sign.orientation.sin()));
     }
 
+    pushes.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    sizes.sort_by(f32::total_cmp);
+
+    // `+ 0.0` is not decoration. IEEE's additive identity is *negative* zero, so
+    // an empty sum comes back as `-0.0` — which then reads as `power -0.0` and,
+    // through `atan2(-0.0, -0.0)`, as a seal leaning firmly toward -180°. Adding
+    // positive zero collapses the sign and changes nothing else.
+    let x: f32 = pushes.iter().map(|p| p.0).sum::<f32>() + 0.0;
+    let y: f32 = pushes.iter().map(|p| p.1).sum::<f32>() + 0.0;
+    let power: f32 = sizes.iter().sum::<f32>() + 0.0;
+    let drift = (x * x + y * y).sqrt();
+
     Balance {
-        heading: y.atan2(x),
-        drift: (x * x + y * y).sqrt(),
+        // A heading is meaningless without drift to point, and reporting one
+        // anyway is how a bare ring came to claim it was shooting backwards.
+        heading: if drift <= f32::EPSILON {
+            0.0
+        } else {
+            y.atan2(x)
+        },
+        drift,
         power,
     }
 }
@@ -364,7 +386,9 @@ pub fn spin(signs: &[Sign], directional: impl Fn(&SignId) -> bool) -> Spin {
         .collect();
     let signs = &steering;
 
-    let power: f32 = signs.iter().map(|sign| sign.size.abs()).sum();
+    let mut sizes: Vec<f32> = signs.iter().map(|sign| sign.size.abs()).collect();
+    sizes.sort_by(f32::total_cmp);
+    let power: f32 = sizes.iter().sum::<f32>() + 0.0;
     if power <= f32::EPSILON {
         return Spin {
             tilt: 0.0,
@@ -373,11 +397,13 @@ pub fn spin(signs: &[Sign], directional: impl Fn(&SignId) -> bool) -> Spin {
         };
     }
 
-    let tilt = signs
+    // Sorted for the same reason [`balance`] sorts: order must not be an input.
+    let mut weighted: Vec<f32> = signs
         .iter()
         .map(|sign| sign.tilt().min(core::f32::consts::PI - sign.tilt()) * sign.size.abs())
-        .sum::<f32>()
-        / power;
+        .collect();
+    weighted.sort_by(f32::total_cmp);
+    let tilt = (weighted.iter().sum::<f32>() + 0.0) / power;
 
     Spin {
         tilt,

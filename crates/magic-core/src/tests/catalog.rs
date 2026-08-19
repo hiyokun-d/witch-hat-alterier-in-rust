@@ -397,3 +397,47 @@ fn a_duplicate_id_is_rejected_at_load() {
         }
     );
 }
+
+/// The three predicates the compiler leans on, and why each is data.
+#[test]
+fn only_directional_signs_steer() {
+    let c = catalog();
+    assert!(c.is_directional(&"column".into()));
+    // Semi-directional: "changing their size will only alter the strength of
+    // their effect, not direction".
+    assert!(!c.is_directional(&"crushing".into()));
+    assert!(!c.is_directional(&"cool".into()));
+    assert!(!c.is_directional(&"nonesuch".into()));
+}
+
+#[test]
+fn region_is_the_only_sign_carrying_arrangements() {
+    let c = catalog();
+    let names: Vec<&str> = c.region_signs().map(|id| id.as_str()).collect();
+    assert_eq!(names, vec!["region"]);
+    assert!(c.is_region(&"region".into()));
+    assert!(!c.is_region(&"column".into()));
+}
+
+#[test]
+fn class_answers_reversibility_where_the_data_is_silent() {
+    let c = catalog();
+    // Stated outright in the data.
+    assert_eq!(c.is_reversible(&"crushing".into()), Some(true));
+    assert_eq!(c.is_reversible(&"coil".into()), Some(false));
+    // Derived from class — §2.3's table, not a guess.
+    assert_eq!(c.is_reversible(&"column".into()), Some(true));
+    assert_eq!(c.is_reversible(&"cool".into()), Some(false));
+}
+
+#[test]
+fn an_unclassified_sign_has_no_reversibility_answer() {
+    // An honest hole. `false` here would silently discard a legal spell.
+    let c = catalog();
+    let unclassified = c
+        .signs()
+        .find(|def| def.class.is_none() && def.reversible.is_none())
+        .expect("the wiki leaves several signs unclassified");
+    assert_eq!(c.is_reversible(&unclassified.id), None);
+    assert_eq!(c.is_reversible(&"nonesuch".into()), None);
+}

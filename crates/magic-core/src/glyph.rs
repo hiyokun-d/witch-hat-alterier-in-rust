@@ -92,6 +92,32 @@ impl Sign {
     }
 }
 
+/// A claw-shaped protrusion: how firmly a spell embeds itself in a body.
+///
+/// **Neither a sign nor a sigil.** The Magic page says so outright, so this is
+/// a fourth kind of mark rather than a sign with an odd name — which is why it
+/// has its own type and its own list on [`Glyph`] instead of a [`SignId`].
+///
+/// Canon: glaives "determine how firmly a spell will imbed itself into one's
+/// body". Whether that means depth or tenacity is unclear, and stays unclear
+/// here. Nearly forgotten since the Day of the Pact; seen on memory erasure and
+/// slime rendering.
+///
+/// **The exception to rule 1.** "Unlike any other known sign, glaives can be
+/// drawn outside of the ring as long as they are still connected to it." So a
+/// glaive whose placement puts it beyond the ring is correctly drawn, not stray
+/// ink, and nothing may drop it for being outside.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Glaive {
+    /// The angle it sits at around the ring, as [`Sign::placement`].
+    pub placement: f32,
+    /// How large it is drawn, in the same units as the ring's radius.
+    ///
+    /// Size is the only thing canon gives us to read here, and it reads the
+    /// same way it does everywhere else in §2.4: bigger is more.
+    pub size: f32,
+}
+
 /// The circle enclosing a glyph — the thing that actually fires the spell.
 ///
 /// Fields are private because `quality` has to stay inside `0.0..=1.0`, and a
@@ -169,8 +195,36 @@ pub struct Glyph {
     /// The sigil at the centre. `None` is legal: billow, repetition, and vision
     /// can drive a spell with no element at all (CLAUDE.md §2.1).
     pub sigil: Option<SigilId>,
+    /// How far the sigil's ink reaches from the centre, in the same units as
+    /// the ring's radius and as [`Sign::size`].
+    ///
+    /// **Size is intensity.** Canon: "the size of a sigil in relation to the
+    /// ring determines the intensity and strength of the spell's effect, with
+    /// larger sigils creating more powerful effects" (§2.2). It does *not*
+    /// change what the sigil does — the recognizer scores shape alone and
+    /// deliberately divides scale out (§3.1), which is exactly why this has to
+    /// be carried here. Nothing downstream could recover it.
+    ///
+    /// Zero when there is no sigil, or when whoever built the glyph did not
+    /// measure one; the compiler then falls back to the ring's own size rather
+    /// than reporting an intensity it does not have.
+    pub sigil_extent: f32,
     /// The keystones arranged around the sigil.
     pub signs: Vec<Sign>,
+    /// Strokes inside the ring that nothing could put a name to.
+    ///
+    /// **Not the same as an empty ring, and conflating the two was a lie on
+    /// screen.** Rule 9's discharge is what a ring with *nothing* in it does; a
+    /// ring full of marks the recognizer cannot read is a spell we failed to
+    /// read, and it must not be reported as a bare one. Until `templates.ron`
+    /// holds traced runes this is every mark on the pad.
+    pub unnamed: usize,
+    /// Claw-shaped marks saying how firmly the spell embeds in a body.
+    ///
+    /// A separate list because a glaive is neither a sign nor a sigil (§2.1),
+    /// and folding it into `signs` would put it into `balance`, `spin` and the
+    /// symmetry classification, where canon never puts it.
+    pub glaives: Vec<Glaive>,
     /// The enclosing circle.
     pub ring: Ring,
     /// The glyph this one is nested inside, if any (canon rule 4).
@@ -190,8 +244,11 @@ impl Glyph {
         Glyph {
             id,
             sigil,
+            sigil_extent: 0.0,
             ring,
             signs: Vec::new(),
+            unnamed: 0,
+            glaives: Vec::new(),
             parent: None,
             linked: Vec::new(),
         }

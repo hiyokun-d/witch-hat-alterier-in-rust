@@ -265,9 +265,16 @@ pub struct SignDef {
     /// classified the sign.
     #[serde(default)]
     pub class: Option<Class>,
-    /// Whether drawing it mirrored inverts its effect.
+    /// Whether drawing it mirrored inverts its effect, where the wiki says so
+    /// outright.
+    ///
+    /// `None` is the common case and means *not stated* — not *no*. The class
+    /// answers it for almost every sign (§2.3: a non-directional sign has no
+    /// front to point the other way), so this is an override for the handful
+    /// the page addresses directly, and [`Catalog::is_reversible`] is what
+    /// callers should ask.
     #[serde(default)]
-    pub reversible: bool,
+    pub reversible: Option<bool>,
     /// Whether it can occupy the centre and drive a spell with no sigil.
     #[serde(default)]
     pub can_substitute_as_sigil: bool,
@@ -576,6 +583,59 @@ impl Catalog {
     pub fn is_decorative(&self, id: &SignId) -> bool {
         self.sign(id)
             .is_some_and(|def| def.tier == Tier::Decorative)
+    }
+
+    /// Whether a sign steers the spell as well as strengthening it.
+    ///
+    /// The predicate [`crate::arrangement::balance`] and
+    /// [`crate::arrangement::spin`] both ask for. Canon is explicit that only
+    /// directional signs redirect a spell: for a semi-directional one
+    /// "changing their size will only alter the strength of their effect, not
+    /// direction", and a non-directional one has no front to point (§2.3).
+    ///
+    /// `false` for an unknown id, and for a sign whose class the wiki has not
+    /// settled — an unclassified sign steering the spell would be an invention.
+    pub fn is_directional(&self, id: &SignId) -> bool {
+        self.sign(id)
+            .is_some_and(|def| def.class == Some(Class::Directional))
+    }
+
+    /// Whether a sign can be drawn mirrored to invert its effect (rule 6).
+    ///
+    /// `None` where canon does not answer: an asymmetric sign, or one the wiki
+    /// has not classified. An honest hole beats a plausible guess (§2), and a
+    /// caller that guessed `false` would silently discard a legal spell.
+    ///
+    /// The class decides it wherever the data does not. §2.3's own table:
+    /// directional and semi-directional signs invert, non-directional ones
+    /// cannot — "no front to point".
+    pub fn is_reversible(&self, id: &SignId) -> Option<bool> {
+        let def = self.sign(id)?;
+        if let Some(stated) = def.reversible {
+            return Some(stated);
+        }
+        match def.class? {
+            Class::Directional | Class::SemiDirectional => Some(true),
+            Class::NonDirectional => Some(false),
+            Class::Asymmetric => None,
+        }
+    }
+
+    /// Whether a sign takes part in the collective region analysis.
+    ///
+    /// Read off the data rather than matched on an id, so a second region-like
+    /// sign would be picked up by adding an `arrangements` block to it and
+    /// nothing else (§4.4). Only `region` carries one today.
+    pub fn is_region(&self, id: &SignId) -> bool {
+        self.sign(id)
+            .is_some_and(|def| !def.arrangements.is_empty())
+    }
+
+    /// Every sign that takes part in region analysis, in catalogue order.
+    pub fn region_signs(&self) -> impl Iterator<Item = &SignId> {
+        self.signs()
+            .filter(|def| !def.arrangements.is_empty())
+            .map(|def| &def.id)
     }
 }
 

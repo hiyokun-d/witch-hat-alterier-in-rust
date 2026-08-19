@@ -30,7 +30,7 @@ use std::collections::BTreeSet;
 
 use crate::Point;
 use crate::circle::{self, CircleFit, Coverage, Winding};
-use crate::glyph::Ring;
+use crate::glyph::{Glyph, GlyphId, Ring};
 use crate::stroke;
 
 /// A stroke joins a ring when at least this share of its points lie on it.
@@ -59,6 +59,22 @@ pub struct RingSearch {
     /// curve, and that circle is noise. Half a ring (rule 3) has to qualify,
     /// so this cannot go above `0.5`.
     pub min_span: f32,
+    /// Least roundness a stroke's own fit must have before it can start a ring,
+    /// as [`CircleFit::quality`].
+    ///
+    /// **Not the same question as [`RingRules::min_quality`], and conflating
+    /// the two was a bug.** This asks whether the ink is a circle at all;
+    /// `min_quality` asks whether a ring is neat enough to hold. A sign's
+    /// arrowhead — two short lines meeting at a point — clears `min_span`
+    /// easily, because its fitted centre lands near the bend and its arms then
+    /// sweep most of a turn about it. Nothing else in the search could see that
+    /// it was a chevron rather than a small ring.
+    ///
+    /// Deliberately far below `min_quality`: a rough ring must still *be* a
+    /// ring, and canon rule 8 grades it afterwards as `Fleeting`. Rejecting on
+    /// size instead would be wrong — rule 5 links several small identical
+    /// seals, and those are real rings.
+    pub min_roundness: f32,
 }
 
 impl Default for RingSearch {
@@ -68,6 +84,10 @@ impl Default for RingSearch {
             on_ring: 12.0,
             join: 16.0,
             min_span: 0.35,
+            // A hand-drawn ring lands near 0.95; the chevrons this rejects sat
+            // at 0.77. Low enough that a genuinely wobbly ring survives to be
+            // graded, high enough that a bend is not a circle.
+            min_roundness: 0.85,
         }
     }
 }
@@ -316,7 +336,8 @@ pub fn find_rings(points: &[Point], search: &RingSearch) -> Vec<RingCandidate> {
         .filter_map(|(index, stroke)| {
             let fit = circle::fit_trimmed(stroke)?;
             let coverage = circle::coverage(stroke, &fit)?;
-            (coverage.spanned >= search.min_span).then_some((index, fit))
+            (coverage.spanned >= search.min_span && fit.quality() >= search.min_roundness)
+                .then_some((index, fit))
         })
         .collect();
 
@@ -430,6 +451,121 @@ fn loose_ends(members: &[usize], strokes: &[&[Point]], join: f32) -> Vec<Point> 
                 .any(|(other, candidate)| other != *slot && end.dist(candidate) <= join)
         })
         .map(|(_, end)| *end)
+        .collect()
+}
+
+/// Which ring each ring sits inside, as indices into `rings`.
+///
+/// Canon rule 4 gates an inner ring on its outer one, and rings nest by
+/// **containment** — there is no other way to draw it. So this is geometry, not
+/// bookkeeping: a ring is nested in the *smallest* ring that encloses it, which
+/// is what makes a three-deep stack resolve to a chain rather than to everything
+/// pointing at the outermost.
+///
+/// A ring is enclosed when its centre is inside the other and it fits within
+/// the remaining room. Touching does not count — two rings that graze are two
+/// seals, and rule 5's linking is what joins those.
+pub fn nesting(rings: &[RingCandidate]) -> Vec<Option<usize>> {
+    rings
+        .iter()
+        .enumerate()
+        .map(|(i, inner)| {
+            rings
+                .iter()
+                .enumerate()
+                .filter(|(j, outer)| {
+                    *j != i
+                        && outer.fit.radius > inner.fit.radius
+                        && inner.fit.center.dist(&outer.fit.center) + inner.fit.radius
+                            <= outer.fit.radius
+                })
+                // The smallest enclosing ring is the parent; anything larger is
+                // that ring's own parent.
+                .min_by(|(_, a), (_, b)| a.fit.radius.total_cmp(&b.fit.radius))
+                .map(|(j, _)| j)
+        })
+        .collect()
+}
+
+/// Pairs of rings joined by a stroke that touches both — canon rule 5.
+///
+/// > "Two glyphs joined by a line link their effects."
+///
+/// A joining line is ink belonging to neither ring's own strokes that comes
+/// within `tolerance` of both. Pairs are returned once, lower index first, so
+/// the result does not depend on which ring was found first (§4.3).
+pub fn links(rings: &[RingCandidate], points: &[Point], tolerance: f32) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    let strokes: Vec<&[Point]> = points.chunk_by(|a, b| a.stroke_id == b.stroke_id).collect();
+
+    for stroke in strokes {
+        let Some(first) = stroke.first() else {
+            continue;
+        };
+        // A ring's own ink cannot be the line that links it to something.
+        let touched: Vec<usize> = rings
+            .iter()
+            .enumerate()
+            .filter(|(_, ring)| !ring.strokes.contains(&first.stroke_id))
+            .filter(|(_, ring)| {
+                stroke
+                    .iter()
+                    .any(|p| (p.dist(&ring.fit.center) - ring.fit.radius).abs() <= tolerance)
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        for (a, &left) in touched.iter().enumerate() {
+            for &right in &touched[a + 1..] {
+                let pair = (left.min(right), left.max(right));
+                if !found.contains(&pair) {
+                    found.push(pair);
+                }
+            }
+        }
+    }
+
+    found.sort_unstable();
+    found
+}
+
+/// Turns a pad of rings into the glyphs the compiler takes.
+///
+/// The last step before magic: every ring becomes a [`Glyph`] carrying what it
+/// encloses, which ring it nests in (rule 4) and which it is linked to (rule 5).
+/// Ids are the ring's index, so a warning naming `#2` points at the third ring
+/// in the same list the overlay numbers.
+///
+/// **What it cannot do yet is name anything.** The sigil is always `None` and
+/// the sign list is always empty, because identifying ink is the recognizer's
+/// job and `templates.ron` is empty until the runes are traced. Every glyph
+/// built here therefore compiles to rule 9's discharge, which is the correct
+/// answer for a ring holding ink nobody can read — not a placeholder.
+pub fn glyphs(rings: &[RingCandidate], points: &[Point], tolerance: f32) -> Vec<Glyph> {
+    let parents = nesting(rings);
+    let joined = links(rings, points, tolerance);
+
+    rings
+        .iter()
+        .enumerate()
+        .map(|(i, ring)| {
+            let mut glyph = Glyph::new(GlyphId(i as u32), None, ring.to_ring());
+            let held = ring.contents(points, tolerance);
+            glyph.sigil_extent = held.extent;
+            // Everything the ring holds, since nothing here can name any of it.
+            // The day the recognizer can, this drops by one per mark it reads.
+            glyph.unnamed = held.inside.len() + held.touching.len();
+            glyph.parent = parents[i].map(|j| GlyphId(j as u32));
+            glyph.linked = joined
+                .iter()
+                .filter_map(|&(a, b)| match (a, b) {
+                    (a, b) if a == i => Some(GlyphId(b as u32)),
+                    (a, b) if b == i => Some(GlyphId(a as u32)),
+                    _ => None,
+                })
+                .collect();
+            glyph
+        })
         .collect()
 }
 

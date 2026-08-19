@@ -614,3 +614,194 @@ fn the_compiled_ring_contains_what_assembly_said_it_held() {
         assert!(compiled.contains(*p, 0.0), "{p:?} fell outside the ring");
     }
 }
+
+/// The head of a placed sign: barb → tip → barb, exactly as `stamp::sign`
+/// builds it — two straight runs meeting at a point.
+fn chevron(id: u32, cx: f32, cy: f32, reach: f32, facing: f32) -> Vec<Point> {
+    let dir = |a: f32| (a.cos(), a.sin());
+    let (dx, dy) = dir(facing);
+    let tip = (cx + dx * reach * 0.5, cy + dy * reach * 0.5);
+    let barb = reach * 0.3;
+    let (lx, ly) = dir(facing + 0.5);
+    let (rx, ry) = dir(facing - 0.5);
+    let left = (tip.0 - lx * barb, tip.1 - ly * barb);
+    let right = (tip.0 - rx * barb, tip.1 - ry * barb);
+
+    let leg = |from: (f32, f32), to: (f32, f32)| -> Vec<Point> {
+        (0..24)
+            .map(|i| {
+                let t = i as f32 / 23.0;
+                Point {
+                    x: from.0 + (to.0 - from.0) * t,
+                    y: from.1 + (to.1 - from.1) * t,
+                    stroke_id: id,
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+    [leg(left, tip), leg(tip, right)].concat()
+}
+
+#[test]
+fn a_chevron_is_not_a_ring() {
+    // Regression. A sign's arrowhead cleared `min_span` outright: its fitted
+    // centre lands near the bend, so the two arms sweep most of a turn about a
+    // radius of a few pixels. Only roundness can tell it from a small ring.
+    let ink = chevron(0, 0.0, 0.0, 57.0, 0.0);
+    assert!(find_rings(&ink, &search()).is_empty());
+}
+
+#[test]
+fn signs_inside_a_ring_do_not_become_rings_of_their_own() {
+    // The drawing from the bug report: one hand-sized ring with three placed
+    // signs inside it. Four rings were reported; there is one.
+    let mut ink = ring(0, 0.0, 0.0, 140.0, 200);
+    for (i, angle) in [0.0f32, 2.1, 4.2].into_iter().enumerate() {
+        let id = 1 + i as u32 * 2;
+        let (cx, cy) = (angle.cos() * 60.0, angle.sin() * 60.0);
+        // The shaft, then the head — the two strokes `stamp::sign` places.
+        ink.extend((0..24).map(|k| Point {
+            x: cx + angle.cos() * (k as f32 / 23.0 - 0.5) * 57.0,
+            y: cy + angle.sin() * (k as f32 / 23.0 - 0.5) * 57.0,
+            stroke_id: id,
+        }));
+        ink.extend(chevron(id + 1, cx, cy, 57.0, angle));
+    }
+    let rings = find_rings(&ink, &search());
+    assert_eq!(rings.len(), 1, "found {:?}", rings.len());
+    assert!((rings[0].fit.radius - 140.0).abs() < 5.0);
+}
+
+#[test]
+fn a_wobbly_ring_still_seeds_one() {
+    // The floor must not swallow rule 8's rough seal — it has to survive to be
+    // graded `Fleeting`, not vanish from the pad.
+    let ink: Vec<Point> = ring(0, 0.0, 0.0, 120.0, 200)
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let wobble = if i % 2 == 0 { 1.06 } else { 0.94 };
+            Point {
+                x: p.x * wobble,
+                y: p.y * wobble,
+                stroke_id: p.stroke_id,
+            }
+        })
+        .collect();
+    assert_eq!(find_rings(&ink, &search()).len(), 1);
+}
+
+// ---- M5.7: the pad's structure, read off geometry ----------------------
+
+#[test]
+fn a_ring_inside_another_nests_in_it() {
+    let mut ink = ring(0, 0.0, 0.0, 200.0, 300);
+    ink.extend(ring(1, 0.0, 0.0, 80.0, 200));
+    let rings = find_rings(&ink, &search());
+    let parents = nesting(&rings);
+    // The larger ring is nobody's child; the smaller sits inside it.
+    let big = rings.iter().position(|r| r.fit.radius > 150.0).unwrap();
+    let small = 1 - big;
+    assert_eq!(parents[big], None);
+    assert_eq!(parents[small], Some(big));
+}
+
+#[test]
+fn nesting_picks_the_smallest_enclosing_ring() {
+    // Three deep must resolve to a chain, not to everything pointing outermost.
+    let mut ink = ring(0, 0.0, 0.0, 300.0, 400);
+    ink.extend(ring(1, 0.0, 0.0, 180.0, 300));
+    ink.extend(ring(2, 0.0, 0.0, 70.0, 200));
+    let rings = find_rings(&ink, &search());
+    let parents = nesting(&rings);
+    let by_size = |r: f32| {
+        rings
+            .iter()
+            .position(|c| (c.fit.radius - r).abs() < 20.0)
+            .unwrap()
+    };
+    let (outer, middle, inner) = (by_size(300.0), by_size(180.0), by_size(70.0));
+    assert_eq!(parents[inner], Some(middle));
+    assert_eq!(parents[middle], Some(outer));
+    assert_eq!(parents[outer], None);
+}
+
+#[test]
+fn two_rings_side_by_side_do_not_nest() {
+    let mut ink = ring(0, -200.0, 0.0, 90.0, 200);
+    ink.extend(ring(1, 200.0, 0.0, 90.0, 200));
+    assert_eq!(nesting(&find_rings(&ink, &search())), vec![None, None]);
+}
+
+#[test]
+fn a_line_touching_two_rings_links_them() {
+    // Canon rule 5: "two glyphs joined by a line link their effects".
+    let mut ink = ring(0, -150.0, 0.0, 80.0, 200);
+    ink.extend(ring(1, 150.0, 0.0, 80.0, 200));
+    // From the right edge of the left ring to the left edge of the right one.
+    ink.extend((0..40).map(|i| Point {
+        x: -70.0 + (140.0 * i as f32 / 39.0),
+        y: 0.0,
+        stroke_id: 2,
+    }));
+    let rings = find_rings(&ink, &search());
+    assert_eq!(links(&rings, &ink, 12.0), vec![(0, 1)]);
+}
+
+#[test]
+fn rings_that_share_no_line_are_not_linked() {
+    let mut ink = ring(0, -200.0, 0.0, 80.0, 200);
+    ink.extend(ring(1, 200.0, 0.0, 80.0, 200));
+    assert!(links(&find_rings(&ink, &search()), &ink, 12.0).is_empty());
+}
+
+#[test]
+fn a_rings_own_ink_never_links_it() {
+    let ink = ring(0, 0.0, 0.0, 120.0, 200);
+    assert!(links(&find_rings(&ink, &search()), &ink, 12.0).is_empty());
+}
+
+#[test]
+fn glyphs_carry_the_nesting_the_geometry_shows() {
+    let mut ink = ring(0, 0.0, 0.0, 200.0, 300);
+    ink.extend(ring(1, 0.0, 0.0, 80.0, 200));
+    let rings = find_rings(&ink, &search());
+    let built = glyphs(&rings, &ink, 12.0);
+    assert_eq!(built.len(), 2);
+    // Exactly one of them has a parent, and it is the other one.
+    let children: Vec<&Glyph> = built.iter().filter(|g| g.parent.is_some()).collect();
+    assert_eq!(children.len(), 1);
+    assert_ne!(children[0].parent, Some(children[0].id));
+}
+
+#[test]
+fn a_glyph_names_nothing_until_the_runes_exist() {
+    // Honest, not a placeholder: identifying ink is the recognizer's job and
+    // `templates.ron` is empty, so every seal is rule 9's discharge for now.
+    let ink = ring(0, 0.0, 0.0, 120.0, 200);
+    let built = glyphs(&find_rings(&ink, &search()), &ink, 12.0);
+    assert_eq!(built[0].sigil, None);
+    assert!(built[0].signs.is_empty());
+}
+
+#[test]
+fn building_glyphs_is_deterministic() {
+    let mut ink = ring(0, 0.0, 0.0, 200.0, 300);
+    ink.extend(ring(1, 0.0, 0.0, 80.0, 200));
+    let rings = find_rings(&ink, &search());
+    assert_eq!(glyphs(&rings, &ink, 12.0), glyphs(&rings, &ink, 12.0));
+}
+
+#[test]
+fn a_glyph_counts_the_marks_it_cannot_name() {
+    // Until the runes are traced this is every mark inside the ring, and it is
+    // what keeps a full seal from being reported as a bare one.
+    let mut ink = ring(0, 0.0, 0.0, 150.0, 250);
+    ink.extend((0..30).map(|i| Point {
+        x: -40.0 + i as f32 * 2.0,
+        y: 0.0,
+        stroke_id: 1,
+    }));
+    let built = glyphs(&find_rings(&ink, &search()), &ink, 12.0);
+    assert_eq!(built[0].unnamed, 1);
+}

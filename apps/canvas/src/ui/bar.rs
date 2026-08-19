@@ -273,6 +273,7 @@ pub fn click(
     mut tools: ResMut<ToolState>,
     mut pad: ResMut<InkPad>,
     mut shape: ResMut<PaperShape>,
+    mut last: ResMut<super::record::LastRecording>,
 ) {
     // `just_pressed`, not `pressed`: a held button would fire every frame.
     if !mouse.just_pressed(MouseButton::Left) {
@@ -291,7 +292,9 @@ pub fn click(
                 tools.mode = if tools.mode == mode { Mode::Pen } else { mode };
             }
             Action::Toggle(toggle) => super::flip(toggle, &mut tools),
-            Action::Run(command) => super::run(command, &mut tools, &mut pad, &mut shape, &window),
+            Action::Run(command) => super::run(
+                command, &mut tools, &mut pad, &mut shape, &window, &mut last,
+            ),
         },
         _ => {}
     }
@@ -359,6 +362,7 @@ pub fn draw(
     window: Single<&Window>,
     pointer: Res<Pointer>,
     tools: Res<ToolState>,
+    last: Res<super::record::LastRecording>,
     mut fills: Query<(&Slot, &mut Sprite)>,
     mut texts: Query<(&Slot, &mut Text2d, &mut TextColor)>,
 ) {
@@ -375,6 +379,9 @@ pub fn draw(
 
     let hint = match hovered {
         Some(Slot::Button(index)) => TOOLS[index].hint.to_string(),
+        // A recording outranks the idle hint until something is hovered, so the
+        // one thing the button produces is not lost the frame after it happens.
+        None if last.0.is_some() => last.0.clone().unwrap_or_default(),
         Some(Slot::Handle) => "show and hide the tools  (Tab)".to_string(),
         // Nothing hovered: say what a click on the paper would do right now.
         // It is the one piece of state no label can show.

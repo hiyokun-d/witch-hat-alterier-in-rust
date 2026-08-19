@@ -284,6 +284,7 @@ fn keyboard_shortcut(
     }
 
     // ignore the ctrl shortcuts
+    // This key will be used to change like tools
     if keys.just_pressed(KeyCode::KeyA) {
         println!("Changing brushes or something i don't know")
     }

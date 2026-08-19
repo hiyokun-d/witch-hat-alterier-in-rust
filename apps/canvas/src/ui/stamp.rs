@@ -44,6 +44,8 @@ pub fn draw_shape(
         // Sized against the ring it is meant to sit inside, so it lands as
         // contents rather than as another ring.
         Shape::Cross => cross(center, radius * 0.45),
+        Shape::Sign => sign(center, radius * 0.45, facing),
+        Shape::Glaive => glaive(center, radius * 0.35, facing),
     }
 }
 
@@ -126,4 +128,61 @@ pub fn cross(center: Vec2, reach: f32) -> Vec<Vec<Vec2>> {
         arm(center - Vec2::X * reach, center + Vec2::X * reach),
         arm(center - Vec2::Y * reach, center + Vec2::Y * reach),
     ]
+}
+
+/// One keystone: a shaft with a head, pointing along `facing`.
+///
+/// Not any named sign — `templates.ron` is empty and inventing a column glyph
+/// here is the thing §2 forbids. What it *is* is a mark with a length and a
+/// direction, which is everything `arrangement::balance` and `spin` need: size
+/// is power, tilt off the radial buys spin at the cost of reach (§2.4). So a
+/// seal built from these can be compiled and steered before a single real rune
+/// exists.
+pub fn sign(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
+    let dir = Vec2::from_angle(facing);
+    let tail = center - dir * reach * 0.5;
+    let tip = center + dir * reach * 0.5;
+
+    let line = |from: Vec2, to: Vec2| -> Vec<Vec2> {
+        (0..SAMPLES_PER_ARM)
+            .map(|i| from.lerp(to, i as f32 / (SAMPLES_PER_ARM - 1) as f32))
+            .collect()
+    };
+
+    // A head rather than a bare line, so which end is the front survives being
+    // drawn, recognised, and reversed (canon rule 6).
+    let barb = reach * 0.3;
+    let left = tip - Vec2::from_angle(facing + 0.5) * barb;
+    let right = tip - Vec2::from_angle(facing - 0.5) * barb;
+
+    vec![
+        line(tail, tip),
+        [line(left, tip), line(tip, right)].concat(),
+    ]
+}
+
+/// A claw: three curved talons fanning out from a point.
+///
+/// Neither a sign nor a sigil (§2.1), and the one mark canon lets you draw
+/// *outside* the ring so long as it still connects — so this is meant to be
+/// placed straddling the line, not tucked inside it.
+///
+/// What it sets is how firmly the spell embeds in a body. Whether that means
+/// depth or tenacity is unknown, and the tool does not pretend otherwise: the
+/// only thing it varies is size, which is the only thing canon gives us.
+pub fn glaive(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
+    let talon = |spread: f32| -> Vec<Vec2> {
+        // Each talon curls further out the way it already leans, so the three
+        // open into a claw. `signum().max(0.4)` was the bug: it turned the
+        // left talon's -1 into +0.4 and curled all three the same way, giving
+        // a fan instead of a claw.
+        (0..SAMPLES_PER_ARM)
+            .map(|i| {
+                let t = i as f32 / (SAMPLES_PER_ARM - 1) as f32;
+                let angle = facing + spread * (1.0 + t * 1.4);
+                center + Vec2::from_angle(angle) * reach * t
+            })
+            .collect()
+    };
+    vec![talon(-0.45), talon(0.0), talon(0.45)]
 }

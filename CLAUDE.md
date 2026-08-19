@@ -635,6 +635,25 @@ Violating any of these is a bug even if it compiles.
 7. **No panics in core.** Return `Result` or `Option`. `unwrap()` is
    allowed only in tests.
 
+8. **Every core capability gets a way to reach it from the panel.** A rule
+   that can only be exercised by drawing it by hand is a rule nobody will
+   exercise. So a change to `magic-core` is not finished until `apps/canvas/ui`
+   can produce the input it needs and show the answer it gives:
+
+   - a new **kind of mark** (sigil, sign, glaive, nested ring, link) gets a
+     `Shape` and a `place` button, so a seal using it can be built without
+     drawing skill;
+   - a new **reading** (balance, spin, region, a compile warning) gets a
+     `Toggle` and a line in the overlay, so it can be seen changing as the seal
+     changes;
+   - a new **threshold** we invented gets a `Command` to nudge it, so the
+     number can be argued with on screen rather than recompiled.
+
+   Two edits, both in `apps/canvas/src/ui/` — the table in `mod.rs`, and the
+   behaviour in `stamp.rs` or `run`. The panel lays itself out from the table.
+   Record the pairing in §9 alongside the milestone: *what landed in core*, and
+   *which button reaches it*.
+
 ---
 
 ## 5. Testing
@@ -713,7 +732,7 @@ atelier/
             ├── main.rs      app, InkPad, capture, paper, ink
             ├── shortcuts.rs undo / redo / clear on &mut InkPad
             ├── debug.rs     on-screen overlay — Claude's, see §0
-            ├── ui/          tool panel: place, guides, toggles
+            ├── ui/          tool panel: place, guides, toggles — see §4.8
             │   ├── mod.rs   plugin, ToolState, the TOOLS table
             │   ├── bar.rs   panel geometry, drawing, hit-testing
             │   ├── place.rs pick-then-place: drag, preview, commit
@@ -760,8 +779,8 @@ M1R Canon rework      ██████████ 7/7   ✅
 M2  Window & pen      ██████████ 5/5   ✅
 M3  Ink               ██████████ 7/7   ✅
 M4  Recognizer        ██████████ 9/9   ✅
-M5  Compiler ring     ░░░░░░░░░░ 0/8   ← current
-M6  Elements/physics  ░░░░░░░░░░ 0/8
+M5  Compiler ring     ██████████ 8/8   ✅
+M6  Elements/physics  ░░░░░░░░░░ 0/8   ← current
 M7  Reactions         ░░░░░░░░░░ 0/8
 M8  Web build         ░░░░░░░░░░ 0/7
 M9  Camera & vision   ░░░░░░░░░░ 0/7
@@ -772,9 +791,32 @@ M4 came in at nine tasks, not the eight first planned: M4.2b — assembling
 strokes into rings — was scoped as part of M4.2 and turned out to be its own
 piece of work.
 
-**Current task:** M5.1 — compile a `Glyph` from the rings and contents the
-recognizer now produces. Blocked on nothing in code; blocked in practice on
-`templates.ron`, which is empty until the rune shapes are traced.
+**Current task:** M6.1 — the first element instance, and the field it lives in.
+`Spell` now carries everything the simulation needs: what drives it, how
+strongly, which way it leans, how much of its effort is spin, what substance it
+demands and whether it must find it.
+
+**The one thing still blocking the recognizer is not code.** `templates.ron`
+ships empty and the shapes have to be traced. `record` writes them now, so the
+step is a person tracing panels, not a missing feature.
+
+*(was M5.7 — the two rules that had no way in from the panel)* Nesting and links compile correctly and can only be reached from tests,
+because nothing on the pad detects a ring inside a ring or a line between two
+rings. That is `assembly`'s job, not the compiler's. Then M5.8, the recorder.
+
+**Canon audit, taken at M5.3.** Every rule in §2 checked against what the code
+actually reads. Four gaps were found and three are now closed: glaives had no
+type at all, rule 8's absolute size was being conflated with §2.2's sigil ratio,
+and sign *count* was never read separately from sign *size*. The fourth — the
+three effects of a decorative sigil (sculpt, target, restrict) — is recorded in
+`sigils.ron` and still unread, and stays open because nothing can yet name a
+decorative sigil on the pad.
+
+Nothing in M5 is blocked on `templates.ron`. The compiler takes a `Glyph` —
+ids, angles and sizes — and never sees ink, so every canon rule can be built
+and tested before a single rune shape is traced. What the empty catalogue
+blocks is the *shell*: nothing on the pad can be named a sigil yet, which is
+M5.7's problem and still needs a recorder.
 
 **Canon rework, after reading the wiki first-hand.** WebFetch gets 402 from
 telepedia; the pages open fine through the browser, and §2 is now written from
@@ -818,6 +860,211 @@ snippets. What changed:
   which restricts a spell to the object it is drawn on. Leaving the old name
   would have collided head-on. The rename turned up a dangling reference from
   `enlarge`, which the catalogue's cross-check caught at load.
+
+**Where M5.1 landed** — the compiler, and the one thing it refuses to do.
+
+*Reaches it from the panel (§4.8):* **`sign`** places a keystone — drag aims it
+and sets its length, which is everything `balance` and `spin` read. **`spell`**
+toggles the compiled-spell readout. The readout itself lands with M5.7; the
+tool and the flag are in place so the wiring has somewhere to arrive.
+
+- `compiler.rs` — `compile(glyph, catalog, rules) -> Spell`. **Total: there is
+  no error type.** Canon calls almost nothing invalid. An unbalanced seal fires
+  sideways, an asymmetric one fires unstably, an open one is a *prepared* spell
+  (rule 2) rather than a broken one — so every glyph compiles and everything
+  wrong with it rides along as a `Warning` carrying the number behind it. A
+  shell can say "leans 0.4 toward 130°"; it never has to say "invalid".
+- **Rule 9 is a first-class case, not a fallback.** A bare ring compiles to
+  `Driver::Discharge`, fires, and reports full intensity — there is nothing
+  smaller than the ring for an explosion to be a fraction of. Four tests guard
+  it, because "nothing in the ring" reading as "nothing to do" is exactly the
+  bug canon warns about. A ring holding signs but no driver is the same
+  discharge with the signs shaping the blast, and `NoDriver` says which case it
+  was.
+- `Firing` is deliberately **not** `Activation`. That enum answers a question
+  about ink — is this shape a ring at all — and is settled before a `Glyph`
+  exists. `Firing` answers a question about a spell from the two facts a `Ring`
+  carries, and asks them in canon's order: structure before craft, so an open
+  ring is never judged on how neatly it was inked.
+- **`reversible` became `Option<bool>`, and that was a real bug.** Three signs
+  in the whole catalogue state it; `#[serde(default)]` made the other 41 read
+  as *not reversible*, which is not what the data says — it is what a missing
+  field says. §2.3's own table settles it by class (directional and
+  semi-directional invert, non-directional cannot — "no front to point"), so
+  `Catalog::is_reversible` derives it and the field is an override. `None` for
+  an asymmetric or unclassified sign, and the compiler warns only on a stated
+  `false`: guessing `false` would silently discard a legal spell.
+- **`Glyph` gained `sigil_extent`.** §3.1 records twice that scale must be
+  captured before it is divided out, and the glyph is downstream of both places
+  that capture it. Intensity is `sigil_extent / ring.radius()` — the wiki's own
+  "size of a sigil in relation to the ring" — and `IntensityUnmeasured` says so
+  out loud rather than reporting a zero nobody drew.
+- Three predicates moved into `Catalog` where they belong: `is_directional`
+  (the one `balance` and `spin` have been asking callers for), `is_region`, and
+  `region_signs`. Region is found by **having an `arrangements` block**, not by
+  matching the id `"region"`, so a second region-like sign would need data and
+  nothing else (§4.4).
+- Capabilities reach the spell as `Option<Capabilities>` — `None` for a
+  discharge, which has no substance to conserve, and for a substitute, whose
+  capabilities the wiki genuinely does not state. Tests pin the two that matter:
+  wind moves air and cannot create it, aeriforms creates air and cannot move it.
+
+**Where M5.2 landed** — the three rules one glyph cannot answer:
+
+- `compile_all(glyphs, catalog, rules)`. `compile` is untouched and still the
+  whole story for one seal; this runs it per glyph and then applies rules 4, 5
+  and 6 **in that order**, because a seal held shut by an outer ring has nothing
+  left to amplify or cancel.
+- **Rule 4** — `gate_nesting` walks *outward* from each glyph, so a chain three
+  deep costs one pass per glyph and needs no ordering of the input. A step cap
+  turns a malformed `parent` chain into `NestingCycle` rather than a hang (§4.7).
+- **Rule 5** — `amplification(n) = sqrt(n)` per seal, so `n` linked twins total
+  `n^1.5`. **Ours**, and the shape is forced: canon says linked seals beat "a
+  single large spell that took up the same amount of space", which is false for
+  anything linear. Two are worth 2.8, four are worth 8.
+- **Links are mutual even when recorded one way.** A drawn line has no
+  direction, and requiring both sides to list each other would make the answer
+  depend on which glyph was assembled first (§4.3).
+- **Rule 6 needed a denominator, and finding that out was the bug.** `inverted`
+  alone made any two seals sharing an upright reversible sign read as twins. A
+  seal is a twin only if *every* sign that could flip did — so `Spell` also
+  carries `reversible`, the effective signs the catalogue says can be mirrored
+  at all. A mirrored non-directional sign stays out of both lists: it is a flag
+  nobody can act on, already reported as `NotReversible`, and it must not make a
+  seal look like somebody's twin.
+- Cancellation is asked **before** amplification, because a twin satisfies
+  `same_spell` too and would otherwise read as a copy.
+- `Spell::strength()` is the one number the simulation will want: zero when the
+  seal is not firing or a twin cancelled it, otherwise intensity times whatever
+  its linked copies add.
+
+*Reaches it from the panel (§4.8):* **nothing yet.** Nesting and links have no
+tool, so both rules are currently only reachable from tests. That is the gap
+M5.7 has to close, and it is now the largest one.
+
+**Where M5.3–M5.6 landed** — and the canon audit that came with them:
+
+- **M5.3, sign requirements.** Three relations in the data, three different
+  strengths, and the difference is the point: `requires` is hard and every one
+  must be present (billow "needs collection to gather the material first", so
+  without it billow contributes nothing); `requires_one_of` is hard but any one
+  will do (enlarge needs selection *or* diamond, because those decide self
+  versus nearby); `pairs_with` is soft — the wiki has only ever *seen* the two
+  together, so the sign alone is unrecorded rather than broken, and it is
+  reported and kept.
+- **Glaives now exist.** §3.3 called for them and there was no type. `Glaive` is
+  its own struct with its own list on `Glyph`, deliberately not a `SignId` —
+  folding it into `signs` would have put it into `balance`, `spin` and the
+  symmetry classification, where canon never puts it. `Spell::embedding` reads
+  total glaive size against the ring, and nothing filters glaives by position,
+  because they are rule 1's one exception.
+- **Rule 8 and §2.2 were being conflated.** `intensity` is a *ratio* — sigil
+  against ring. `scale` is the seal's outright size — "larger seals are more
+  powerful than smaller ones". Two different canon claims, now two fields. A big
+  seal with a small sigil is powerful and unfocused; a small seal with a filling
+  sigil is focused and weak.
+- **Count is a third knob.** "The amount of signs will affect the range or
+  quantity of magic generated" is separate from size being power.
+  `Spell::sign_count` reads it; `Balance::power` only ever summed the second.
+- **M5.4, conservation.** `Demand` turns the capability model into a rule the
+  simulation can enforce: what substance the spell acts on, and whether it must
+  *find* it. A test asserts every elemental sigil that cannot create names what
+  it needs — a conservation rule with no substance attached is unenforceable.
+  Non-elemental sigils are excluded, because guidance, obliviation and doorways
+  act on no substance at all and an empty list is the right answer for them.
+- **M5.6 found a real determinism bug.** `balance` summed sign pushes in arrival
+  order, and float addition is not associative — the same seal with its signs
+  listed in two orders gave `0.051757645` against `0.051757623`. §3.3 is explicit
+  that stroke order is never an input, so `balance` and `spin` now sort their
+  contributions before summing. The property test that caught it is the one from
+  §5's table, and it would never have shown up in an example-based test.
+
+*Reaches it from the panel (§4.8):* **`glaive`** places a claw. **`spell`** now
+renders — the inspector carries driver, firing, strength, intensity,
+amplification, scale, sign count, embedding, symmetry, region, balance, spin,
+what the spell must find, and every warning. `debug.rs` decides nothing: it
+builds a `Glyph`, calls `compile`, and prints what comes back.
+
+Every seal on the pad currently compiles as rule 9's **discharge**, and that is
+the honest answer rather than a placeholder — `templates.ron` is empty, so
+nothing can be *named* a sigil yet. The moment a rune is traced the block starts
+saying something different without changing.
+
+**Where M5.7 and M5.8 landed** — the pad becomes glyphs, and runes get out:
+
+- `assembly::nesting` reads rule 4's structure off **geometry**, because there
+  is no other way to draw it: a ring is nested in the *smallest* ring that
+  encloses it, which is what makes a three-deep stack resolve to a chain rather
+  than to everything pointing at the outermost. Touching does not count — two
+  rings that graze are two seals, and rule 5 is what joins those.
+- `assembly::links` finds rule 5's joining line: ink belonging to neither ring
+  that comes within tolerance of both. A ring's own strokes can never link it.
+  Pairs come back lower-index-first so the answer does not depend on which ring
+  was found first (§4.3).
+- `assembly::glyphs` is the last step before magic — rings in, `Glyph`s out,
+  carrying contents, parent and links. **It names nothing**, and that is correct
+  rather than unfinished: identifying ink is the recognizer's job and
+  `templates.ron` is empty, so every seal compiles to rule 9's discharge. A test
+  pins that, so the day it changes is a decision.
+- **M5.8, the recorder.** `ui/record.rs` writes every non-ring stroke on the pad
+  as a `templates.ron` fragment. Rings are excluded on purpose: a ring is the
+  activator, not a rune, and the recogniser is never asked to identify one —
+  `circle.rs` does that with geometry. The id lands as `RENAME_ME`, because
+  naming the rune is a decision about canon and the panel has no text entry;
+  making the file is mechanical and that is the half worth automating.
+- Writing files is the shell's business (§4.1), and the format is core's —
+  `templates::parse` has to accept the result, so the round trip is the test
+  that matters.
+
+*Reaches it from the panel (§4.8):* **`record`** writes the fragment and says on
+the hint line what it wrote or why it wrote nothing. The **spell readout** now
+compiles the whole pad through `compile_all`, so a nested or linked ring reports
+what the other rings did to it — a ring compiled alone can never know either.
+
+**Five bugs off the screenshot**, found by reading the overlay rather than the
+code — which is what it is for:
+
+- **`power -0.0`, `embed -0.00`, and a bare ring "leaning toward -180°".** IEEE's
+  additive identity is *negative* zero, so an empty sum comes back `-0.0`, and
+  `atan2(-0.0, -0.0)` is `-π`. A seal with no signs was reporting a firm
+  direction. `+ 0.0` collapses the sign; `clamp` does not, which is why `embed`
+  needed the same fix separately. `balance` now also refuses to report a heading
+  when there is no drift to point — the field's own docs already said it was
+  meaningless there, and the overlay printed it anyway.
+- **"bare ring — this is an explosion", over a seal covered in ink.** Rule 9 is
+  about a ring with *nothing* in it. A ring full of marks nobody can read is a
+  spell we failed to read, and calling it an explosion is a lie with canon's name
+  on it. `Glyph::unnamed` counts them and `Warning::Unreadable` says so. Until
+  `templates.ron` holds traced runes that is every mark on the pad, and the count
+  drops by one for each rune the recognizer learns.
+- **`Radial` for a seal with no signs.** Vacuously true, and it reads as a
+  measurement. The overlay prints `—` at zero signs; core still answers what it
+  answers (§4.2).
+- **Ring captions landing on the inspector's own lines.** Closed rings put their
+  caption at the top, which is exactly where the readout runs. They sit at the
+  bottom now.
+- **The glaive was a fan, not a claw.** `spread.signum().max(0.4)` turned the
+  left talon's `-1` into `+0.4`, curling all three the same way. Each talon now
+  curls further out the way it already leans.
+
+**The chevron bug** — found on screen after `sign` shipped, fixed before M5.2:
+
+A placed sign's arrowhead was being reported as its own ring: `rings 4 from 10
+strokes [r140 q0.95] [r11 q0.77] [r6 q0.77] [r7 q0.77]`. Two short lines meeting
+at a point clear `min_span` outright — the fit puts the centre near the bend, so
+the arms then sweep most of a turn about a radius of a few pixels — and they
+clear `is_simple` too, because turning and coverage agree for a V just as they
+do for an arc.
+
+Nothing in the search asked **whether the ink was round at all**. That question
+had been conflated with `min_quality`, which asks something else entirely and
+only runs *after* a candidate is already a ring. Split into
+`RingSearch::min_roundness` (0.85 — is this a circle) against
+`RingRules::min_quality` (0.95 — is this ring neat enough to hold), so rule 8's
+rough seal still seeds a ring and still grades `Fleeting`.
+
+Rejecting on **size** would have been the wrong fix and is worth recording as
+such: rule 5 links several small identical seals, and those are real rings.
 
 **Where M4.1 landed:**
 

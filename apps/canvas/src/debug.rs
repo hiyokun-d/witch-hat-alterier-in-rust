@@ -169,14 +169,8 @@ const STROKES_SHOWN: usize = 6;
 ///
 /// The overlay covers a real fraction of the pad now, and judging ink you
 /// cannot fully see is worse than having no readouts.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct OverlayVisible(bool);
-
-impl Default for OverlayVisible {
-    fn default() -> Self {
-        OverlayVisible(true)
-    }
-}
 
 /// A ring buffer of recent frame times.
 ///
@@ -231,6 +225,7 @@ impl Plugin for DebugOverlayPlugin {
         app.init_resource::<InputProbe>()
             .init_resource::<FrameTimes>()
             .init_resource::<OverlayVisible>()
+            .init_resource::<Lore>()
             .add_systems(
                 Update,
                 (
@@ -683,6 +678,8 @@ fn update_inspector(
     pad: Res<InkPad>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
+    tools: Option<Res<ToolState>>,
+    lore: Res<Lore>,
     mut panel: Single<&mut Text2d, With<InspectorLine>>,
 ) {
     let rings = circle_search(&pad);
@@ -758,7 +755,7 @@ fn update_inspector(
          \x20          {} pts   reach {:.0}px   ×{fill:.2} of the ring   element: ?\n\
          quality    {quality:.3}  {bar}\n\
          canon      r{:.0} → strength    neat {quality:.2} → duration\n\
-         verdict    {verdict}",
+         verdict    {verdict}{}",
         rings.len(),
         ring.strokes,
         if by_hover { "hover" } else { "first" },
@@ -816,7 +813,105 @@ fn update_inspector(
         held.points,
         held.extent,
         fit.radius,
+        spell_report(ring, &held, &lore, tools.as_deref()),
     );
+}
+
+/// The catalogue, parsed once at startup.
+///
+/// Baked in with `include_str!` rather than read from disk: core has no
+/// filesystem (§4.1), the shell would need an asset path that survives being
+/// bundled into a `.app`, and the overlay is a debug tool. `Catalog::parse` over
+/// strings is the shipped path either way.
+#[derive(Resource)]
+struct Lore(Option<magic_core::Catalog>);
+
+impl Default for Lore {
+    fn default() -> Self {
+        Lore(
+            magic_core::Catalog::parse(
+                include_str!("../../../crates/magic-core/the-magic-assets/sigils.ron"),
+                include_str!("../../../crates/magic-core/the-magic-assets/signs.ron"),
+                include_str!("../../../crates/magic-core/the-magic-assets/spells.ron"),
+            )
+            .ok(),
+        )
+    }
+}
+
+/// What the ring compiles to, appended to the inspector.
+///
+/// Only the ring and what it holds are real inputs — `templates.ron` is empty,
+/// so nothing on the pad can be *named* a sigil yet and every seal currently
+/// compiles as canon rule 9's discharge. That is the honest answer rather than
+/// a placeholder, and the moment a rune is traced this block starts saying
+/// something different without changing.
+///
+/// The shell decides nothing here: it builds a `Glyph`, calls `compile`, and
+/// prints what comes back (§4.2).
+fn spell_report(
+    ring: &assembly::RingCandidate,
+    held: &assembly::RingContents,
+    lore: &Lore,
+    tools: Option<&ToolState>,
+) -> String {
+    if !tools.is_none_or(|t| t.spell) {
+        return String::new();
+    }
+    let Some(catalog) = lore.0.as_ref() else {
+        return "\nspell      catalogue failed to load".to_string();
+    };
+
+    let mut glyph = magic_core::Glyph::new(magic_core::GlyphId(0), None, ring.to_ring());
+    glyph.sigil_extent = held.extent;
+
+    let spell = magic_core::compile(&glyph, catalog, &magic_core::CompileRules::default());
+    let warnings = if spell.warnings.is_empty() {
+        "none".to_string()
+    } else {
+        spell
+            .warnings
+            .iter()
+            .map(|w| w.to_string())
+            .collect::<Vec<_>>()
+            .join("  ·  ")
+    };
+
+    format!(
+        "\n── spell ──\n         driver     {:?}   firing {:?}   fires {}\n         strength   {:.2}   intensity {:.2}   ×{:.2} linked   scale r{:.0}\n         shape      {} sign(s)   embed {:.2}   {}   region {:?}\n         pad        nested in {}   linked to {:?}\n         balance    lean {:.2} → {:.0}°   power {:.1}   spin {:.2} / reach {:.2}\n         needs      {}\n         warnings   {warnings}",
+        spell.driver,
+        spell.firing,
+        spell.fires(),
+        spell.strength(),
+        spell.intensity,
+        spell.amplification,
+        spell.scale,
+        spell.sign_count,
+        spell.embedding,
+        // Symmetry classifies an *arrangement*, and a seal with no signs has
+        // none to classify — `Radial` there is vacuously true and reads as a
+        // measurement. Wording only; core still answers what it answers (§4.2).
+        match spell.sign_count {
+            0 => "—".to_string(),
+            _ => format!("{:?}", spell.symmetry),
+        },
+        spell.region,
+        match glyph.parent {
+            Some(id) => format!("#{}", id.0),
+            None => "nothing".to_string(),
+        },
+        glyph.linked.iter().map(|id| id.0).collect::<Vec<_>>(),
+        spell.balance.lean(),
+        spell.balance.heading.to_degrees(),
+        spell.balance.power,
+        spell.spin.spin,
+        spell.spin.reach,
+        match &spell.demand {
+            Some(d) if d.must_find => format!("must find {:?}", d.substance),
+            Some(d) => format!("may create {:?}", d.substance),
+            None => "nothing — a discharge conserves no substance".to_string(),
+        },
+    )
 }
 
 /// Keeps the overlay in the bottom-left corner as the window resizes.
@@ -1073,9 +1168,10 @@ fn update_ring_labels(
         // An armed ring puts its caption at the widest hole, which is where
         // the eye wants to go. A closed ring has no meaningful gap direction —
         // its widest gap is just the sampling step and wanders frame to frame
-        // — so those sit at the top, where nested rings stack tidily.
+        // — so those sit at the *bottom*. The top is where the inspector's own
+        // lines run, and a caption there landed on top of them.
         let angle = if ring.closed {
-            std::f32::consts::FRAC_PI_2
+            -std::f32::consts::FRAC_PI_2
         } else {
             ring.coverage.gap_heading
         };
