@@ -113,6 +113,8 @@ pub struct ToolState {
     pub stamp_gap: f32,
     /// The compiled-spell readout: what the seal on the pad will actually do.
     pub spell: bool,
+    /// The recogniser board: every recorded rune scored against the ink.
+    pub runes: bool,
 }
 
 impl Default for ToolState {
@@ -126,6 +128,7 @@ impl Default for ToolState {
             stamp_radius: 140.0,
             stamp_gap: 40.0,
             spell: true,
+            runes: true,
         }
     }
 }
@@ -162,6 +165,7 @@ pub enum Toggle {
     Debug,
     Guides,
     Spell,
+    Runes,
 }
 
 /// A one-shot a button fires.
@@ -215,13 +219,13 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         section: "place",
         label: "ring",
-        hint: "click or drag out a closed ring — fires on its own",
+        hint: "click or drag out a closed ring - fires on its own",
         action: Action::Pick(Mode::Place(Shape::Ring)),
     },
     Tool {
         section: "place",
         label: "arc",
-        hint: "a ring with a hole — drag to aim the hole. Rule 2's prepared spell",
+        hint: "a ring with a hole - drag to aim the hole. Rule 2's prepared spell",
         action: Action::Pick(Mode::Place(Shape::Arc)),
     },
     Tool {
@@ -233,24 +237,24 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         section: "place",
         label: "sign",
-        hint: "a keystone — drag to aim it and set its length. Size is power (§2.4)",
+        hint: "a keystone - drag to aim it, set its length. Size is power (canon 2.4)",
         action: Action::Pick(Mode::Place(Shape::Sign)),
     },
     Tool {
         section: "place",
         label: "glaive",
-        hint: "a claw — how firmly the spell embeds. Straddle the ring with it",
+        hint: "a claw - how firmly the spell embeds. Straddle the ring with it",
         action: Action::Pick(Mode::Place(Shape::Glaive)),
     },
     Tool {
         section: "size",
         label: "radius +",
-        hint: "place bigger — canon rule 8, larger seals are stronger",
+        hint: "place bigger - canon rule 8, larger seals are stronger",
         action: Action::Run(Command::Bigger),
     },
     Tool {
         section: "size",
-        label: "radius −",
+        label: "radius -",
         hint: "place smaller",
         action: Action::Run(Command::Smaller),
     },
@@ -262,32 +266,32 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         section: "size",
-        label: "gap −",
-        hint: "narrow the hole — take it to zero and the arc closes",
+        label: "gap -",
+        hint: "narrow the hole - take it to zero and the arc closes",
         action: Action::Run(Command::NarrowerGap),
     },
     Tool {
         section: "pad",
         label: "undo",
-        hint: "lift the last stroke off the pad  (⌘Z)",
+        hint: "lift the last stroke off the pad  (Cmd Z)",
         action: Action::Run(Command::Undo),
     },
     Tool {
         section: "pad",
         label: "redo",
-        hint: "put it back  (⇧⌘Z)",
+        hint: "put it back  (Shift Cmd Z)",
         action: Action::Run(Command::Redo),
     },
     Tool {
         section: "pad",
         label: "clear",
-        hint: "empty the pad, recoverably  (⌘⌫)",
+        hint: "empty the pad, recoverably  (Cmd Del)",
         action: Action::Run(Command::Clear),
     },
     Tool {
         section: "pad",
         label: "wipe",
-        hint: "empty the pad and its history  (⇧⌘⌫)",
+        hint: "empty the pad and its history  (Shift Cmd Del)",
         action: Action::Run(Command::ClearAll),
     },
     Tool {
@@ -311,8 +315,14 @@ pub const TOOLS: &[Tool] = &[
     Tool {
         section: "view",
         label: "spell",
-        hint: "what the seal compiles to — driver, firing, balance, warnings",
+        hint: "what the seal compiles to - driver, firing, balance, warnings",
         action: Action::Toggle(Toggle::Spell),
+    },
+    Tool {
+        section: "view",
+        label: "runes",
+        hint: "score the ink against every recorded rune - record adds one",
+        action: Action::Toggle(Toggle::Runes),
     },
     Tool {
         section: "view",
@@ -420,7 +430,7 @@ pub fn run(
             // is not where anyone is looking while drawing.
             last.0 = Some(match record::record(pad) {
                 Ok(message) => message,
-                Err(why) => format!("nothing written — {why}"),
+                Err(why) => format!("nothing written - {why}"),
             });
         }
     }
@@ -433,6 +443,7 @@ pub fn is_on(toggle: Toggle, tools: &ToolState) -> bool {
         Toggle::Debug => tools.debug_overlay,
         Toggle::Guides => tools.guides,
         Toggle::Spell => tools.spell,
+        Toggle::Runes => tools.runes,
     }
 }
 
@@ -443,5 +454,6 @@ pub fn flip(toggle: Toggle, tools: &mut ToolState) {
         Toggle::Debug => tools.debug_overlay = !tools.debug_overlay,
         Toggle::Guides => tools.guides = !tools.guides,
         Toggle::Spell => tools.spell = !tools.spell,
+        Toggle::Runes => tools.runes = !tools.runes,
     }
 }

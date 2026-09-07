@@ -387,11 +387,11 @@ pub fn draw(
         // It is the one piece of state no label can show.
         _ => match tools.mode {
             Mode::Pen => format!(
-                "pen · drag to draw · shapes would land at r{:.0}, gap {:.0}°",
+                "pen | drag to draw | shapes would land at r{:.0}, gap {:.0}deg",
                 tools.stamp_radius, tools.stamp_gap
             ),
             Mode::Place(shape) => format!(
-                "{shape:?} armed · click to place, drag to size · r{:.0}, gap {:.0}°",
+                "{shape:?} armed | click to place, drag to size | r{:.0}, gap {:.0}deg",
                 tools.stamp_radius, tools.stamp_gap
             ),
         },

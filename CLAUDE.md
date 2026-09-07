@@ -800,6 +800,76 @@ demands and whether it must find it.
 ships empty and the shapes have to be traced. `record` writes them now, so the
 step is a person tracing panels, not a missing feature.
 
+**Where the recogniser board landed** — `$P` gets the overlay the circle fitter
+already had:
+
+- **The board ranks every rune, not just the winner.** A single "best match" is
+  the one number that cannot be argued with, and the interesting question is
+  always what came *second* and by how much — M4.8's own finding was that a
+  square and a ring sit 0.110 and 0.127 apart, which is only visible if both are
+  on screen. So the board prints distance, a bar and a source for each rune, and
+  the margin between first and second underneath.
+- **The preview box now holds two clouds.** The drawing in teal, the nearest
+  rune in gold, in the same normalised frame — the gap you see is the distance
+  the board reports. Position and scale are already divided out, and rotation
+  deliberately is not (canon rule 6), so a reversed rune looks reversed here.
+- **`CONFIDENT_MARGIN` is ours and lives in `debug.rs`.** `classify` is
+  deliberately unthresholded because how close is close enough is a question
+  about magic (§2.6), so the only judgement on screen is a word beside a number,
+  parked in the overlay rather than smuggled into core.
+- **The recorder now writes a file that loads, not a fragment that pastes.**
+  Before, a traced rune could not be *matched* until it had been pasted into
+  `templates.ron`, named, and the app rebuilt — which meant the tool that exists
+  to unblock the recogniser could not feed it. `record` now emits a complete,
+  valid template file and **appends** to it, so several runes can be traced in
+  one sitting; the overlay rereads it whenever its mtime changes. Trace, press
+  record, and it is scored on the next frame. Pasting still works — the entries
+  in the middle are exactly what `templates.ron` wants.
+- Placeholder ids are numbered (`RENAME_ME_1`, `RENAME_ME_2`), because
+  `templates::parse` rejects a duplicate id within a kind, and it is right to:
+  two runes with one name means one of them can never win a match.
+- `subject_ink` is one helper now, because the board, the preview and the
+  inspector must be looking at the same gesture or their numbers describe
+  different drawings.
+
+*Reaches it from the panel (§4.8):* **`runes`** toggles the board. **`record`**
+is what puts anything in it.
+
+**Three bugs off the board's first screenshot:**
+
+- **The default font has no box-drawing glyphs.** `─ — · × ° → █ ░ ± ² … ≥` all
+  render as tofu, and always had — `no rings ▯ ink so far`, `dpi ▯2.00`,
+  `half ▯640`. The overlay pulls in Bevy's default font and nothing else (`ui`'s
+  own note says so), so **every string `debug.rs` prints is ASCII now**. Rule for
+  anything added later: if it is not on a US keyboard, it is a box on screen.
+- **One long value slid the whole board off the left edge.** The block is
+  right-anchored, so its width is its longest line — and a RON parse error at
+  `15:1` is a very long line. Header rows are short and one-per-fact now, and the
+  error is not printed at all (below).
+- **A stale `recorded-gesture.ron` broke the board with a parser dump.** The file
+  on disk was the *old* recorder's bare fragment, which has no `version` line, so
+  every frame reported `Unexpected missing field named 'version' in TemplateFile`
+  — true, unreadable, and not actionable. It now says
+  `unreadable - press record to rewrite it`, which is exactly what fixes it. And
+  `record` **moves an uncarvable file to `.bak` before overwriting**: tracing a
+  rune is the expensive half of this project, and the recorder must not eat one.
+
+**The M6 map, eight tasks:**
+
+```
+M6.1  Vec2, SubstanceId, Parcel, Field — the nouns
+M6.2  world ↔ cell under stress: bounds, clamping, what falls off the edge
+M6.3  fixed-timestep integration — gravity, velocity, position (§4.3)
+M6.4  Spell → parcels; `demand.must_find` takes from the field, never from nothing
+M6.5  heat between parcel and cell; Repetition resets state (§2.2)
+M6.6  lifetime — rule 8: neat seals last, Fleeting ones do not
+M6.7  the panel and the overlay (§4.8): run, pause, step, see the field
+M6.8  conservation audit — mass in equals mass out, as property tests
+```
+
+`docs/m6.1-first-parcel.md` is the written guide for the first one: thirty steps,
+every symbol defined, signatures and test names only.
+
 *(was M5.7 — the two rules that had no way in from the panel)* Nesting and links compile correctly and can only be reached from tests,
 because nothing on the pad detects a ring inside a ring or a line between two
 rings. That is `assembly`'s job, not the compiler's. Then M5.8, the recorder.

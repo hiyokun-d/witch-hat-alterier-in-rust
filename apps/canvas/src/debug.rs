@@ -97,6 +97,22 @@ const PREVIEW_MARGIN: f32 = 24.0;
 /// The preview's frame and axes.
 const PREVIEW_FRAME: Color = Color::srgba(0.55, 0.30, 0.75, 0.45);
 
+/// The template's cloud in the preview box. The drawing is teal, what it is
+/// being compared against is gold — one picture, two clouds, so a bad match is
+/// something you can see rather than only read.
+const TEMPLATE_MARK: Color = Color::srgba(0.92, 0.74, 0.28, 0.85);
+
+/// How many ranked runes the board lists before it stops counting.
+const RANKED_SHOWN: usize = 10;
+
+/// A gap this wide between first place and second reads as a confident call.
+///
+/// **Ours, not canon** (§2.6), and parked here rather than in core for exactly
+/// that reason. `recognizer::classify` is deliberately unthresholded — how
+/// close is close enough is a question about magic, and it belongs to whoever
+/// compiles a spell. This number only puts a word beside a number on screen.
+const CONFIDENT_MARGIN: f32 = 0.05;
+
 /// The reach of whatever the ring encloses — the future sigil's bubble.
 const CONTENTS_MARK: Color = Color::srgba(0.20, 0.58, 0.50, 0.75);
 /// Ink that fits a circle and covers it, and is still not a ring — a
@@ -226,6 +242,7 @@ impl Plugin for DebugOverlayPlugin {
             .init_resource::<FrameTimes>()
             .init_resource::<OverlayVisible>()
             .init_resource::<Lore>()
+            .init_resource::<Runes>()
             .add_systems(
                 Update,
                 (
@@ -233,6 +250,10 @@ impl Plugin for DebugOverlayPlugin {
                     sample_frame_time,
                     toggle_overlay,
                     apply_visibility,
+                    // Outside the visible group on purpose: a rune recorded
+                    // while the overlay is hidden should already be loaded when
+                    // it comes back, not one frame behind.
+                    reload_runes,
                 )
                     .chain(),
             );
@@ -256,6 +277,8 @@ impl Plugin for DebugOverlayPlugin {
                     update_ring_labels,
                     place_inspector,
                     update_inspector,
+                    place_matches,
+                    update_matches,
                     draw_guides,
                     draw_stroke_ends,
                     draw_fits,
@@ -292,7 +315,7 @@ fn overlay_visible(visible: Res<OverlayVisible>, tools: Option<Res<ToolState>>) 
 ///
 /// The inspector is pinned by its own system rather than the `lift` stack, so
 /// it carries no [`OverlayLine`] and has to be named separately.
-type AnyReadout = Or<(With<OverlayLine>, With<InspectorLine>)>;
+type AnyReadout = Or<(With<OverlayLine>, With<InspectorLine>, With<MatchLine>)>;
 
 /// F1 shows and hides everything this file draws.
 ///
@@ -381,6 +404,10 @@ struct FitLine;
 #[derive(Component)]
 struct InspectorLine;
 
+/// Marks the recogniser board, pinned under the cloud preview.
+#[derive(Component)]
+struct MatchLine;
+
 /// A caption floating beside one fitted ring, carrying its slot in the pool.
 ///
 /// A seal can be several rings at once — nested (canon rule 4), linked (rule
@@ -403,7 +430,7 @@ fn spawn_overlay(mut commands: Commands) {
     // instead of its center, so text grows right and up, away from the edge.
     // `place_overlay` supplies the position — resizing the window keeps it put.
     commands.spawn((
-        Text2d::new("cursor: —"),
+        Text2d::new("cursor: -"),
         font.clone(),
         // Lightened for the desk: the readouts sit in the bottom-left, which
         // is outside the paper disc at every window size. Each line keeps its
@@ -417,7 +444,7 @@ fn spawn_overlay(mut commands: Commands) {
     ));
 
     commands.spawn((
-        Text2d::new("ink: —"),
+        Text2d::new("ink: -"),
         font.clone(),
         TextColor(Color::srgb(0.88, 0.72, 0.44)),
         TextLayout::justify(Justify::Left),
@@ -427,7 +454,7 @@ fn spawn_overlay(mut commands: Commands) {
     ));
 
     commands.spawn((
-        Text2d::new("input: —"),
+        Text2d::new("input: -"),
         font.clone(),
         TextColor(Color::srgb(0.72, 0.58, 0.92)),
         TextLayout::justify(Justify::Left),
@@ -437,7 +464,7 @@ fn spawn_overlay(mut commands: Commands) {
     ));
 
     commands.spawn((
-        Text2d::new("layout: —"),
+        Text2d::new("layout: -"),
         font.clone(),
         TextColor(Color::srgb(0.52, 0.74, 0.94)),
         TextLayout::justify(Justify::Left),
@@ -449,7 +476,7 @@ fn spawn_overlay(mut commands: Commands) {
 
     // Row 3 is the gap the single-line cursor readout leaves above itself.
     commands.spawn((
-        Text2d::new("frame: —"),
+        Text2d::new("frame: -"),
         font.clone(),
         TextColor(Color::srgb(0.72, 0.70, 0.64)),
         TextLayout::justify(Justify::Left),
@@ -459,7 +486,7 @@ fn spawn_overlay(mut commands: Commands) {
     ));
 
     commands.spawn((
-        Text2d::new("strokes: —"),
+        Text2d::new("strokes: -"),
         font.clone(),
         TextColor(Color::srgb(0.92, 0.62, 0.64)),
         TextLayout::justify(Justify::Left),
@@ -471,7 +498,7 @@ fn spawn_overlay(mut commands: Commands) {
     // Above the stroke block, which is two rows tall starting at 8. Blue to
     // match the circle the gizmos draw for it.
     commands.spawn((
-        Text2d::new("fit: —"),
+        Text2d::new("fit: -"),
         font,
         TextColor(Color::srgb(0.42, 0.68, 0.96)),
         TextLayout::justify(Justify::Left),
@@ -493,6 +520,21 @@ fn spawn_overlay(mut commands: Commands) {
         Anchor::TOP_LEFT,
         InspectorLine,
     ));
+
+    // Directly under the cloud preview, in the same corner. The picture and
+    // the numbers that explain it should not be at opposite ends of the window.
+    commands.spawn((
+        Text2d::new(""),
+        TextFont {
+            font_size: FontSize::Px(13.0),
+            ..default()
+        },
+        TextColor(Color::srgb(0.90, 0.78, 0.46)),
+        TextLayout::justify(Justify::Left),
+        // Right-anchored so the block's edge stays put as rows change width.
+        Anchor::TOP_RIGHT,
+        MatchLine,
+    ));
 }
 
 /// Pins the inspector to the top-left corner.
@@ -503,6 +545,13 @@ fn place_inspector(
     let half = Vec2::new(window.width(), window.height()) * 0.5;
     panel.translation.x = -half.x + MARGIN;
     panel.translation.y = half.y - MARGIN;
+}
+
+/// Pins the recogniser board below the cloud preview it belongs to.
+fn place_matches(window: Single<&Window>, mut panel: Single<&mut Transform, With<MatchLine>>) {
+    let half = Vec2::new(window.width(), window.height()) * 0.5;
+    panel.translation.x = half.x - MARGIN;
+    panel.translation.y = half.y - PREVIEW_SIZE - PREVIEW_MARGIN * 2.0;
 }
 
 /// Which ring the cursor is inspecting: the one whose edge it is nearest.
@@ -548,6 +597,7 @@ fn draw_cloud_preview(
     gizmos: &mut Gizmos<DebugGizmos>,
     window: &Window,
     cloud: &recognizer::Cloud,
+    best: Option<&recognizer::Cloud>,
 ) {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
     let center = Vec2::new(
@@ -562,6 +612,19 @@ fn draw_cloud_preview(
     );
     // The origin the cloud was centred on. Every cloud's points average to it.
     cross(gizmos, center, PREVIEW_FRAME);
+
+    // The nearest rune, drawn first so the drawing sits on top of it. Both
+    // clouds are already in the same units — that is what normalisation was
+    // for — so the gap you see here is the distance the board reports.
+    if let Some(best) = best {
+        for p in &best.points {
+            gizmos.circle_2d(
+                Isometry2d::from_translation(center + Vec2::new(p.x, p.y) * PREVIEW_SIZE),
+                SAMPLE_DOT * 1.7,
+                TEMPLATE_MARK,
+            );
+        }
+    }
 
     for p in &cloud.points {
         gizmos.circle_2d(
@@ -607,6 +670,22 @@ fn gesture(points: &[crate::Point], ids: &[u32]) -> Vec<crate::Point> {
         .copied()
         .filter(|p| ids.contains(&p.stroke_id))
         .collect()
+}
+
+/// The ink the recogniser is being shown for one ring.
+///
+/// What the ring holds — rule 1's *inside* and *touching* — falling back to the
+/// ring's own strokes so the preview is never blank while there is ink to show.
+/// One helper because the board, the preview and the inspector must all be
+/// looking at the same gesture, or the numbers describe different drawings.
+fn subject_ink(pad: &InkPad, ring: &assembly::RingCandidate) -> Vec<crate::Point> {
+    let held = ring.contents(&pad.points, ON_RING_TOLERANCE);
+    let mut ids = held.inside.clone();
+    ids.extend(held.touching.iter().copied());
+    if ids.is_empty() {
+        ids = ring.strokes.clone();
+    }
+    gesture(&pad.points, &ids)
 }
 
 /// Dots every stroke in `ids` at the positions `$P` will be handed.
@@ -659,7 +738,7 @@ fn shape_of(ring: &assembly::RingCandidate) -> &'static str {
     }
     if w.backtrack() > 0.25 && w.turns < 0.35 {
         // Travelled a long way and came back with nothing to show for it.
-        return "figure-eight — lobes cancel";
+        return "figure-eight - lobes cancel";
     }
     if w.turns > spanned + 0.5 {
         return "drawn round more than once";
@@ -687,7 +766,7 @@ fn update_inspector(
     let cursor = cursor_world(&window, camera, camera_transform);
 
     let Some((slot, by_hover)) = inspected(&rings, cursor) else {
-        panel.0 = "── no ring ──\ndraw a loop".to_string();
+        panel.0 = "-- no ring --\ndraw a loop".to_string();
         return;
     };
 
@@ -714,7 +793,7 @@ fn update_inspector(
 
     let filled = (quality * QUALITY_CELLS as f32).round() as usize;
     let bar: String = (0..QUALITY_CELLS)
-        .map(|i| if i < filled { '█' } else { '░' })
+        .map(|i| if i < filled { '#' } else { '.' })
         .collect();
 
     // Canon rule 2 gates on closure, and the Spells page gates on circularity
@@ -729,32 +808,32 @@ fn update_inspector(
     // The verdict is core's call, not the overlay's — deciding what magic
     // means is never a shell's job (§4.2). All the shell adds is wording.
     let verdict = match ring.activation(&RULES) {
-        assembly::Activation::Malformed => format!("NOT A RING — {}", shape_of(ring)),
+        assembly::Activation::Malformed => format!("NOT A RING - {}", shape_of(ring)),
         assembly::Activation::Armed => {
-            format!("ARMED — {} end(s) to join", ring.open_ends.len())
+            format!("ARMED - {} end(s) to join", ring.open_ends.len())
         }
         assembly::Activation::Fleeting => format!(
-            "FLEETING — not circular enough (needs q {:.2})",
+            "FLEETING - not circular enough (needs q {:.2})",
             RULES.min_quality
         ),
-        assembly::Activation::Active => "ACTIVE — circuit closed".to_string(),
+        assembly::Activation::Active => "ACTIVE - circuit closed".to_string(),
     };
 
     panel.0 = format!(
-        "── ring {slot}/{} {:?} ── {}\n\
+        "-- ring {slot}/{} {:?} -- {}\n\
          geometry   centre {:.0}, {:.0}      radius {:.1}\n\
-         \x20          circumference {circumference:.0}px   area {:.0}px²\n\
-         ink        {} stroke(s)   {} pts   drawn {:.0}px   ×{:.2} of the ring\n\
+         \x20          circumference {circumference:.0}px   area {:.0}px^2\n\
+         ink        {} stroke(s)   {} pts   drawn {:.0}px   x{:.2} of the ring\n\
          fit        rms {:.2}px   worst {:.2}px   trimmed {}   centroid off {centroid_off:.1}px\n\
-         coverage   spanned {:.1}%   gap {:.0}px / {:.0}°   facing {:.0}°\n\
+         coverage   spanned {:.1}%   gap {:.0}px / {:.0}deg   facing {:.0}deg\n\
          turning    {:.2} turns   sweep {:.2}   backtrack {:.2}   {}\n\
          closure    {}   loose ends {}\n\
          holds      inside {:?}   touching {:?}   ignored {:?}\n\
          resample   {} pts/stroke   ring @ {:.1}px   held @ {}\n\
-         cloud      {}   rotation kept — canon rule 6\n\
-         \x20          {} pts   reach {:.0}px   ×{fill:.2} of the ring   element: ?\n\
+         cloud      {}   rotation kept - canon rule 6\n\
+         \x20          {} pts   reach {:.0}px   x{fill:.2} of the ring   element: ?\n\
          quality    {quality:.3}  {bar}\n\
-         canon      r{:.0} → strength    neat {quality:.2} → duration\n\
+         canon      r{:.0} -> strength    neat {quality:.2} -> duration\n\
          verdict    {verdict}{}",
         rings.len(),
         ring.strokes,
@@ -786,7 +865,7 @@ fn update_inspector(
         stroke::MATCH_POINTS,
         even_spacing(&pad.points, &ring.strokes),
         match held.inside.len() + held.touching.len() {
-            0 => "—".to_string(),
+            0 => "-".to_string(),
             _ => {
                 let mut ids = held.inside.clone();
                 ids.extend(held.touching.iter().copied());
@@ -807,7 +886,7 @@ fn update_inspector(
                     c.origin.x,
                     c.origin.y
                 ),
-                None => "— nothing to normalise".to_string(),
+                None => "- nothing to normalise".to_string(),
             }
         },
         held.points,
@@ -837,6 +916,229 @@ impl Default for Lore {
             .ok(),
         )
     }
+}
+
+/// Every recorded rune the recogniser can match ink against.
+///
+/// Two sources, and the split is the point. `templates.ron` is the catalogue —
+/// traced, named against `sigils.ron`, and baked into the binary. It ships
+/// empty (§2: an honest hole beats a plausible guess), so on a fresh build the
+/// board has nothing to rank and says so.
+///
+/// `recorded-gesture.ron` is the scratch file the `record` button writes, read
+/// off disk whenever it changes. That closes the loop the recogniser has been
+/// waiting on since M4.8: trace a shape, press record, and it is being scored
+/// against your ink a second later without a rebuild.
+#[derive(Resource)]
+struct Runes {
+    shipped: Vec<magic_core::Recorded>,
+    live: Vec<magic_core::Recorded>,
+    /// What happened to `live` last time it was read — a count, or why not.
+    live_note: String,
+    /// Last modification time seen. The outer `Option` means "never looked",
+    /// which is not the same as "looked and the file was absent".
+    stamp: Option<Option<std::time::SystemTime>>,
+}
+
+impl Default for Runes {
+    fn default() -> Self {
+        Runes {
+            shipped: magic_core::templates::parse(
+                "templates.ron",
+                include_str!("../../../crates/magic-core/the-magic-assets/templates.ron"),
+                stroke::MATCH_POINTS,
+            )
+            .unwrap_or_default(),
+            live: Vec::new(),
+            live_note: "not written yet".to_string(),
+            stamp: None,
+        }
+    }
+}
+
+impl Runes {
+    /// Every rune, catalogue first, tagged with where it came from.
+    fn all(&self) -> Vec<(&'static str, &magic_core::Recorded)> {
+        self.shipped
+            .iter()
+            .map(|rune| ("traced", rune))
+            .chain(self.live.iter().map(|rune| ("live", rune)))
+            .collect()
+    }
+}
+
+/// Rereads the recorder's file whenever it changes.
+///
+/// A stat call once a frame rather than a filesystem watcher: this is a debug
+/// tool, the file is one we wrote ourselves, and a watcher is a dependency and
+/// a thread for something one syscall already answers.
+fn reload_runes(mut runes: ResMut<Runes>) {
+    let stamp = std::fs::metadata(crate::ui::record::OUTFILE)
+        .and_then(|meta| meta.modified())
+        .ok();
+    if runes.stamp == Some(stamp) {
+        return;
+    }
+    runes.stamp = Some(stamp);
+
+    let Ok(source) = std::fs::read_to_string(crate::ui::record::OUTFILE) else {
+        runes.live.clear();
+        runes.live_note = "not written yet".to_string();
+        return;
+    };
+
+    match magic_core::templates::parse("recorded-gesture.ron", &source, stroke::MATCH_POINTS) {
+        Ok(found) => {
+            runes.live_note = format!("{} rune(s)", found.len());
+            runes.live = found;
+        }
+        Err(_) => {
+            runes.live.clear();
+            // Deliberately not the parser's own message. The overwhelmingly
+            // likely cause is a file the *older* recorder wrote — a bare
+            // fragment with no `version` line — and pressing record again
+            // rewrites it in the format that loads. A RON error at 15:1 tells
+            // nobody that, and it is long enough to blow the panel's width out
+            // past the edge of the window, which is how this was found.
+            runes.live_note = "unreadable - press record to rewrite it".to_string();
+        }
+    }
+}
+
+/// The recogniser board: every rune scored against the ink in the ring.
+///
+/// The circle fitter gets an overlay showing what it measured; this is the same
+/// courtesy for `$P`. A single "best match" tells you nothing about *why* — the
+/// interesting question is always what came second and by how much, because
+/// that is what decides whether a rune shape is worth keeping in the catalogue
+/// at all (M4.8 found a square and a ring only 16% apart).
+///
+/// Decides nothing (§4.2): it normalises, calls `rank`, and prints. The one
+/// judgement on screen is [`CONFIDENT_MARGIN`], which is marked as ours.
+fn update_matches(
+    pad: Res<InkPad>,
+    window: Single<&Window>,
+    camera: Single<(&Camera, &GlobalTransform)>,
+    tools: Option<Res<ToolState>>,
+    lore: Res<Lore>,
+    runes: Res<Runes>,
+    mut panel: Single<&mut Text2d, With<MatchLine>>,
+) {
+    if !tools.is_none_or(|state| state.runes) {
+        panel.0.clear();
+        return;
+    }
+
+    let all = runes.all();
+    let vocabulary = lore.0.as_ref().map_or_else(
+        || "catalogue failed to load".to_string(),
+        |catalog| {
+            format!(
+                "{} sigils, {} signs, {} with a shape",
+                catalog.sigils().count(),
+                catalog.signs().count(),
+                all.len(),
+            )
+        },
+    );
+
+    // Every line is kept short on purpose. The block is right-anchored, so its
+    // width is set by its longest line — one long value and the whole panel
+    // slides off the left edge of the window.
+    let mut out = format!(
+        "-- recogniser --  $P, {} pts, rotation kept\n\
+         templates.ron    {}\n\
+         recorded         {}\n\
+         catalogue        {vocabulary}\n",
+        stroke::MATCH_POINTS,
+        match runes.shipped.len() {
+            0 => "empty on purpose".to_string(),
+            n => format!("{n} traced"),
+        },
+        runes.live_note,
+    );
+
+    let rings = circle_search(&pad);
+    let (camera, camera_transform) = *camera;
+    let cursor = cursor_world(&window, camera, camera_transform);
+
+    let Some((slot, _)) = inspected(&rings, cursor) else {
+        panel.0 = out + "gesture    - no ring to look inside\n";
+        return;
+    };
+
+    let ink = subject_ink(&pad, &rings[slot]);
+    let Some(cloud) = recognizer::normalize(&ink, stroke::MATCH_POINTS) else {
+        panel.0 = out + "gesture    - nothing to normalise\n";
+        return;
+    };
+
+    out.push_str(&format!(
+        "gesture    ring {slot}   {} mark(s)   {} pts   scale {:.0}px divided out\n",
+        ink.chunk_by(|a, b| a.stroke_id == b.stroke_id).count(),
+        cloud.points.len(),
+        cloud.scale,
+    ));
+
+    if all.is_empty() {
+        panel.0 = out
+            + "ranked     nothing to rank - no rune has a shape yet\n\
+               \x20          trace one inside the ring, press record, and it\n\
+               \x20          is scored here on the next frame\n";
+        return;
+    }
+
+    let shapes: Vec<recognizer::Template> =
+        all.iter().map(|(_, rune)| rune.template.clone()).collect();
+    let ranked = recognizer::rank(&cloud, &shapes);
+
+    // The bar is *relative* — full for the nearest rune in this ranking, empty
+    // for the furthest. An absolute bar would say nothing: every plausible
+    // distance sits in a narrow band near zero, so ten cells would fill for a
+    // good match and a bad one alike. The number beside it is the absolute one.
+    let nearest = ranked.first().map_or(0.0, |found| found.distance);
+    let furthest = ranked.last().map_or(0.0, |found| found.distance);
+    let spread = (furthest - nearest).max(f32::EPSILON);
+
+    out.push_str("ranked     distance is the mean miss, in gesture widths\n");
+    for (place, found) in ranked.iter().take(RANKED_SHOWN).enumerate() {
+        let (source, rune) = all[found.index];
+        let standing = 1.0 - (found.distance - nearest) / spread;
+        let filled = ((standing * QUALITY_CELLS as f32).round() as usize).min(QUALITY_CELLS);
+        let bar: String = (0..QUALITY_CELLS)
+            .map(|cell| if cell < filled { '#' } else { '.' })
+            .collect();
+        out.push_str(&format!(
+            "{:>3}  {:<18} {:<6} {source:<7} {:.3}  {bar}\n",
+            place + 1,
+            rune.template.name,
+            format!("{:?}", rune.kind),
+            found.distance,
+        ));
+    }
+    if ranked.len() > RANKED_SHOWN {
+        out.push_str(&format!("     ... {} more\n", ranked.len() - RANKED_SHOWN));
+    }
+
+    out.push_str(&match (ranked.first(), ranked.get(1)) {
+        (Some(best), Some(second)) => {
+            let margin = second.distance - best.distance;
+            format!(
+                "margin     {margin:.3} clear of {} - {}\n",
+                all[second.index].1.template.name,
+                if margin >= CONFIDENT_MARGIN {
+                    "a clear call (ours: >=0.05)"
+                } else {
+                    "too close to call (ours: <0.05)"
+                },
+            )
+        }
+        (Some(_), None) => "margin     only one rune to compare against\n".to_string(),
+        _ => "margin     nothing comparable - sample counts differ\n".to_string(),
+    });
+
+    out.push_str("threshold  none - how close is close enough is the compiler's call");
+    panel.0 = out;
 }
 
 /// What the ring compiles to, appended to the inspector.
@@ -874,11 +1176,11 @@ fn spell_report(
             .iter()
             .map(|w| w.to_string())
             .collect::<Vec<_>>()
-            .join("  ·  ")
+            .join("  |  ")
     };
 
     format!(
-        "\n── spell ──\n         driver     {:?}   firing {:?}   fires {}\n         strength   {:.2}   intensity {:.2}   ×{:.2} linked   scale r{:.0}\n         shape      {} sign(s)   embed {:.2}   {}   region {:?}\n         pad        nested in {}   linked to {:?}\n         balance    lean {:.2} → {:.0}°   power {:.1}   spin {:.2} / reach {:.2}\n         needs      {}\n         warnings   {warnings}",
+        "\n-- spell --\n         driver     {:?}   firing {:?}   fires {}\n         strength   {:.2}   intensity {:.2}   x{:.2} linked   scale r{:.0}\n         shape      {} sign(s)   embed {:.2}   {}   region {:?}\n         pad        nested in {}   linked to {:?}\n         balance    lean {:.2} -> {:.0}deg   power {:.1}   spin {:.2} / reach {:.2}\n         needs      {}\n         warnings   {warnings}",
         spell.driver,
         spell.firing,
         spell.fires(),
@@ -892,7 +1194,7 @@ fn spell_report(
         // none to classify — `Radial` there is vacuously true and reads as a
         // measurement. Wording only; core still answers what it answers (§4.2).
         match spell.sign_count {
-            0 => "—".to_string(),
+            0 => "-".to_string(),
             _ => format!("{:?}", spell.symmetry),
         },
         spell.region,
@@ -909,7 +1211,7 @@ fn spell_report(
         match &spell.demand {
             Some(d) if d.must_find => format!("must find {:?}", d.substance),
             Some(d) => format!("may create {:?}", d.substance),
-            None => "nothing — a discharge conserves no substance".to_string(),
+            None => "nothing - a discharge conserves no substance".to_string(),
         },
     )
 }
@@ -993,7 +1295,7 @@ fn update_input_line(
     // one that was never started.
     let tap_run = match taps.remaining(time.elapsed_secs()) {
         Some(left) => format!("F {}/{} {left:.1}s", taps.count(), taps.needed()),
-        None => format!("F ×{} swaps paper", taps.needed()),
+        None => format!("F x{} swaps paper", taps.needed()),
     };
 
     line.0 = format!(
@@ -1001,7 +1303,7 @@ fn update_input_line(
         window.focused,
         probe.key_events,
         if probe.last_key.is_empty() {
-            "—"
+            "-"
         } else {
             &probe.last_key
         },
@@ -1148,17 +1450,17 @@ fn update_ring_labels(
         let state = match activation {
             assembly::Activation::Malformed => shape_of(ring).to_string(),
             assembly::Activation::Armed => {
-                format!("ARMED — {} loose end(s)", ring.open_ends.len())
+                format!("ARMED - {} loose end(s)", ring.open_ends.len())
             }
-            assembly::Activation::Fleeting => "FLEETING — too rough".to_string(),
-            assembly::Activation::Active => "ACTIVE — circuit closed".to_string(),
+            assembly::Activation::Fleeting => "FLEETING - too rough".to_string(),
+            assembly::Activation::Active => "ACTIVE - circuit closed".to_string(),
         };
 
         // Member strokes are printed because a ring made of several strokes is
         // the normal case, and knowing which ones it swallowed is the whole
         // reason a closing line no longer looks like a ring of its own.
         text.0 = format!(
-            "{:?} · r {:.0} · q {:.2}\n{state}",
+            "{:?} | r {:.0} | q {:.2}\n{state}",
             ring.strokes,
             ring.fit.radius,
             ring.fit.quality()
@@ -1246,7 +1548,7 @@ fn update_layout_line(
             let gap = Vec2::new(half.x - t.x, t.y + half.y);
             format!("{:.0}, {:.0}  gap {:.0}, {:.0}", t.x, t.y, gap.x, gap.y)
         }
-        None => "—".to_string(),
+        None => "-".to_string(),
     };
 
     // Scale *is* the radius: the mesh is a unit circle. Also reported is how
@@ -1262,14 +1564,14 @@ fn update_layout_line(
                 half.min_element() - paper.scale.x
             ),
             PaperShape::Full => {
-                format!("FULL {:.0}×{:.0}", paper.scale.x, paper.scale.y)
+                format!("FULL {:.0}x{:.0}", paper.scale.x, paper.scale.y)
             }
         },
-        None => "—".to_string(),
+        None => "-".to_string(),
     };
 
     line.0 = format!(
-        "window {:.0}×{:.0}   half ±{:.0}, ±{:.0}   dpi ×{:.2}   {}\ncredit {credit_at}   paper {paper_at}   margins {MARGIN:.0}/{:.0}",
+        "window {:.0}x{:.0}   half +/-{:.0}, +/-{:.0}   dpi x{:.2}   {}\ncredit {credit_at}   paper {paper_at}   margins {MARGIN:.0}/{:.0}",
         window.width(),
         window.height(),
         half.x,
@@ -1305,7 +1607,7 @@ fn update_frame_line(
             mean * 1000.0,
             mean * 1000.0 / 16.7 * 100.0
         ),
-        _ => "—".to_string(),
+        _ => "-".to_string(),
     };
 
     line.0 = format!(
@@ -1375,7 +1677,7 @@ fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>
     let (head, state) = match rings.first() {
         Some(r) => (
             format!(
-                "ring 1/{}   strokes {:?}   c {:.0},{:.0}   r {:.1}   rms {:.2}px   q {:.3}   trim {}   dev ×{DEVIATION_GAIN:.0}",
+                "ring 1/{}   strokes {:?}   c {:.0},{:.0}   r {:.1}   rms {:.2}px   q {:.3}   trim {}   dev x{DEVIATION_GAIN:.0}",
                 rings.len(),
                 r.strokes,
                 r.fit.center.x,
@@ -1386,7 +1688,7 @@ fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>
                 r.fit.trimmed,
             ),
             format!(
-                "gap {:.0}px ({:.0}°)   spanned {:.1}%   turns {:.2}   loose ends {}   {}",
+                "gap {:.0}px ({:.0}deg)   spanned {:.1}%   turns {:.2}   loose ends {}   {}",
                 r.coverage.gap_length,
                 r.coverage.gap.to_degrees(),
                 r.coverage.spanned * 100.0,
@@ -1403,8 +1705,8 @@ fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>
             ),
         ),
         None => (
-            "no rings — ink so far names no circle".to_string(),
-            "—".to_string(),
+            "no rings - ink so far names no circle".to_string(),
+            "-".to_string(),
         ),
     };
 
@@ -1417,7 +1719,7 @@ fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>
                 r.fit.radius,
                 r.fit.quality(),
                 r.strokes,
-                if r.closed { "○" } else { "◜" }
+                if r.closed { "o" } else { "(" }
             )
         })
         .collect();
@@ -1459,6 +1761,7 @@ fn draw_fits(
     pad: Res<InkPad>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
+    runes: Res<Runes>,
     mut gizmos: Gizmos<DebugGizmos>,
 ) {
     let rings = circle_search(&pad);
@@ -1516,13 +1819,15 @@ fn draw_fits(
         // What the ring encloses, as the recognizer will see it. Falls back to
         // the ring itself when nothing is inside yet, so the box is never
         // blank while there is ink to show.
-        let subject = if held_ids.is_empty() {
-            gesture(&pad.points, &candidate.strokes)
-        } else {
-            gesture(&pad.points, &held_ids)
-        };
-        if let Some(cloud) = recognizer::normalize(&subject, stroke::MATCH_POINTS) {
-            draw_cloud_preview(&mut gizmos, &window, &cloud);
+        if let Some(cloud) =
+            recognizer::normalize(&subject_ink(&pad, candidate), stroke::MATCH_POINTS)
+        {
+            let all = runes.all();
+            let shapes: Vec<recognizer::Template> =
+                all.iter().map(|(_, rune)| rune.template.clone()).collect();
+            let best =
+                recognizer::classify(&cloud, &shapes).map(|found| &shapes[found.index].cloud);
+            draw_cloud_preview(&mut gizmos, &window, &cloud, best);
         }
 
         // Detail for the inspected ring only. All of it at once is a smear.
@@ -1598,7 +1903,7 @@ fn cursor_text(window: &Window, camera: &Camera, camera_transform: &GlobalTransf
     };
 
     format!(
-        "screen {:.0}, {:.0}   →   world {:.0}, {:.0}",
+        "screen {:.0}, {:.0}   ->   world {:.0}, {:.0}",
         cursor.x, cursor.y, world.x, world.y
     )
 }
@@ -1615,7 +1920,7 @@ fn ink_text(pad: &InkPad, mouse: &ButtonInput<MouseButton>) -> String {
 
     let last = match pad.points.last() {
         Some(point) => format!("{:.0}, {:.0}", point.x, point.y),
-        None => "—".to_string(),
+        None => "-".to_string(),
     };
 
     format!(

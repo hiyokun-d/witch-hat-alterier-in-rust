@@ -19,3 +19,4 @@
 # Written by the panel's `record` button — a scratch fragment to paste
 # into the-magic-assets/templates.ron, never a source file itself.
 recorded-gesture.ron
+recorded-gesture.ron.bak
