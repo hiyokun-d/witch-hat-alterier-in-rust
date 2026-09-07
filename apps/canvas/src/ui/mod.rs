@@ -117,6 +117,18 @@ pub struct ToolState {
     pub runes: bool,
     /// The simulation overlay: parcels, cell density, and what it is doing.
     pub sim: bool,
+    /// Which sigil the pad's seals are treated as, by position in the
+    /// catalogue's own order. `None` leaves the recognizer to it.
+    ///
+    /// **A testing override, not a claim about shapes.** `templates.ron` is
+    /// empty on purpose (§2 — the runes belong to the manga and have to be
+    /// traced), so without this every seal on the pad compiles to rule 9's
+    /// discharge and the whole compiler is unreachable from the app. Naming a
+    /// sigil is not the same as inventing what it looks like.
+    pub sigil: Option<usize>,
+    /// Which canon spell fixture from `spells.ron` the pad's seals are built
+    /// as. Overrides `sigil`, because a fixture names one.
+    pub fixture: Option<usize>,
 }
 
 impl Default for ToolState {
@@ -132,6 +144,8 @@ impl Default for ToolState {
             spell: true,
             runes: true,
             sim: true,
+            sigil: None,
+            fixture: None,
         }
     }
 }
@@ -194,6 +208,15 @@ pub enum Command {
     StepOnce,
     /// Empties the world without touching the ink.
     ClearWorld,
+    /// Steps through the catalogue's sigils, so a seal can be named without a
+    /// traced rune.
+    NextSigil,
+    PrevSigil,
+    /// Steps through `spells.ron`'s canon fixtures.
+    NextFixture,
+    PrevFixture,
+    /// Back to whatever the recognizer says, which is currently nothing.
+    ClearNaming,
 }
 
 /// What a button does when clicked.
@@ -319,16 +342,34 @@ pub const TOOLS: &[Tool] = &[
         action: Action::Run(Command::Record),
     },
     Tool {
-        section: "view",
-        label: "guides",
-        hint: "rings and spokes to draw along",
-        action: Action::Toggle(Toggle::Guides),
+        section: "name",
+        label: "sigil >",
+        hint: "name the seal as the next sigil in the catalogue",
+        action: Action::Run(Command::NextSigil),
     },
     Tool {
-        section: "view",
-        label: "spell",
-        hint: "what the seal compiles to - driver, firing, balance, warnings",
-        action: Action::Toggle(Toggle::Spell),
+        section: "name",
+        label: "sigil <",
+        hint: "the previous one",
+        action: Action::Run(Command::PrevSigil),
+    },
+    Tool {
+        section: "name",
+        label: "spell >",
+        hint: "build the seal as the next canon spell from spells.ron",
+        action: Action::Run(Command::NextFixture),
+    },
+    Tool {
+        section: "name",
+        label: "spell <",
+        hint: "the previous fixture",
+        action: Action::Run(Command::PrevFixture),
+    },
+    Tool {
+        section: "name",
+        label: "unname",
+        hint: "back to what the recognizer says - which is nothing yet",
+        action: Action::Run(Command::ClearNaming),
     },
     Tool {
         section: "cast",
@@ -353,6 +394,18 @@ pub const TOOLS: &[Tool] = &[
         label: "empty",
         hint: "clear the world, leaving the ink alone",
         action: Action::Run(Command::ClearWorld),
+    },
+    Tool {
+        section: "view",
+        label: "guides",
+        hint: "rings and spokes to draw along",
+        action: Action::Toggle(Toggle::Guides),
+    },
+    Tool {
+        section: "view",
+        label: "spell",
+        hint: "what the seal compiles to - driver, firing, balance, warnings",
+        action: Action::Toggle(Toggle::Spell),
     },
     Tool {
         section: "view",

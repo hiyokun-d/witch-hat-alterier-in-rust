@@ -10,6 +10,7 @@
 //! with a new section name grows a new heading. Neither needs anything here to
 //! change.
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
 
@@ -81,39 +82,51 @@ fn headings() -> Vec<&'static str> {
     found
 }
 
-/// Every row of the panel, top to bottom.
+/// Every row of the panel, top to bottom — and left again when it runs out.
 ///
 /// The single source of truth for the panel's geometry. Cheap enough to
-/// rebuild each frame — fifteen rows — and rebuilding beats caching something
-/// that has to follow a resizing window.
+/// rebuild each frame and rebuilding beats caching something that has to
+/// follow a resizing window.
+///
+/// **It wraps into columns.** Twenty-odd tools is taller than a 900px window,
+/// and the first version simply drew the overflow past the bottom edge where
+/// `runes` and `debug` could never be clicked. A tool nobody can reach is worse
+/// than no tool, so a column that will not fit starts a new one to its left.
 fn rows(window: &Window) -> Vec<Row> {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
-    let x = half.x - EDGE - PANEL_W * 0.5;
+    let floor = -half.y + EDGE + PAD;
+    let width = PANEL_W - PAD * 2.0;
+
+    let mut out: Vec<Row> = Vec::with_capacity(TOOLS.len() + 6);
+    let mut column = 0usize;
     let mut top = half.y - EDGE - PAD;
 
-    let mut out: Vec<Row> = Vec::with_capacity(TOOLS.len() + 4);
-    let push = |slot: Slot, height: f32, top: &mut f32, out: &mut Vec<Row>| {
+    let mut place = |slot: Slot, height: f32, column: &mut usize, top: &mut f32| {
+        // The handle always stays in the first column: it is how the panel is
+        // opened, so it cannot be the thing that moved.
+        if *top - height < floor && !matches!(slot, Slot::Handle) {
+            *column += 1;
+            *top = half.y - EDGE - PAD;
+        }
+        let x = half.x - EDGE - PANEL_W * 0.5 - *column as f32 * (PANEL_W + PAD);
         out.push(Row {
             slot,
-            rect: Rect::from_center_size(
-                Vec2::new(x, *top - height * 0.5),
-                Vec2::new(PANEL_W - PAD * 2.0, height),
-            ),
+            rect: Rect::from_center_size(Vec2::new(x, *top - height * 0.5), Vec2::new(width, height)),
         });
         *top -= height + ROW_GAP;
     };
 
-    push(Slot::Handle, BUTTON_H, &mut top, &mut out);
+    place(Slot::Handle, BUTTON_H, &mut column, &mut top);
 
     let mut section = "";
     let mut heading = 0;
     for (index, tool) in TOOLS.iter().enumerate() {
         if tool.section != section {
             section = tool.section;
-            push(Slot::Heading(heading), HEADER_H, &mut top, &mut out);
+            place(Slot::Heading(heading), HEADER_H, &mut column, &mut top);
             heading += 1;
         }
-        push(Slot::Button(index), BUTTON_H, &mut top, &mut out);
+        place(Slot::Button(index), BUTTON_H, &mut column, &mut top);
     }
 
     out
@@ -123,13 +136,20 @@ fn rows(window: &Window) -> Vec<Row> {
 fn panel_rect(window: &Window) -> Rect {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
     let laid_out = rows(window);
+
+    // Across every column, not just the last row: the slab has to cover a
+    // second column that starts at the top again.
+    let left = laid_out
+        .iter()
+        .map(|row| row.rect.min.x)
+        .fold(half.x - EDGE - PANEL_W, f32::min);
     let bottom = laid_out
-        .last()
+        .iter()
         .map(|row| row.rect.min.y)
-        .unwrap_or(half.y - EDGE);
+        .fold(half.y - EDGE, f32::min);
 
     Rect::from_corners(
-        Vec2::new(half.x - EDGE - PANEL_W, bottom - PAD),
+        Vec2::new(left - PAD, bottom - PAD),
         Vec2::new(half.x - EDGE, half.y - EDGE),
     )
 }
@@ -265,16 +285,26 @@ fn hit(at: Vec2, window: &Window, tools: &ToolState) -> Option<Slot> {
         .map(|row| row.slot)
 }
 
+/// Everything a button press is allowed to change.
+///
+/// Bundled rather than listed one by one: a system taking eight resources is
+/// a system nobody can read the signature of, and the panel's commands only
+/// grow from here.
+#[derive(SystemParam)]
+pub struct Controls<'w> {
+    tools: ResMut<'w, ToolState>,
+    pad: ResMut<'w, InkPad>,
+    shape: ResMut<'w, PaperShape>,
+    last: ResMut<'w, super::record::LastRecording>,
+    world: ResMut<'w, crate::sim::Simulation>,
+}
+
 /// Turns a press into a tool.
 pub fn click(
     mouse: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
     pointer: Res<Pointer>,
-    mut tools: ResMut<ToolState>,
-    mut pad: ResMut<InkPad>,
-    mut shape: ResMut<PaperShape>,
-    mut last: ResMut<super::record::LastRecording>,
-    mut world: ResMut<crate::sim::Simulation>,
+    mut controls: Controls,
 ) {
     // `just_pressed`, not `pressed`: a held button would fire every frame.
     if !mouse.just_pressed(MouseButton::Left) {
@@ -284,17 +314,27 @@ pub fn click(
         return;
     };
 
-    match hit(at, &window, &tools) {
-        Some(Slot::Handle) => super::flip(super::Toggle::Panel, &mut tools),
+    match hit(at, &window, &controls.tools) {
+        Some(Slot::Handle) => super::flip(super::Toggle::Panel, &mut controls.tools),
         Some(Slot::Button(index)) => match TOOLS[index].action {
             // Picking what is already armed disarms it, so the same button
             // both takes the tool up and puts it down.
             Action::Pick(mode) => {
-                tools.mode = if tools.mode == mode { Mode::Pen } else { mode };
+                controls.tools.mode = if controls.tools.mode == mode {
+                    Mode::Pen
+                } else {
+                    mode
+                };
             }
-            Action::Toggle(toggle) => super::flip(toggle, &mut tools),
+            Action::Toggle(toggle) => super::flip(toggle, &mut controls.tools),
             Action::Run(command) => super::run(
-                command, &mut tools, &mut pad, &mut shape, &window, &mut last, &mut world,
+                command,
+                &mut controls.tools,
+                &mut controls.pad,
+                &mut controls.shape,
+                &window,
+                &mut controls.last,
+                &mut controls.world,
             ),
         },
         _ => {}
