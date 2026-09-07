@@ -5,6 +5,7 @@ pub mod circle;
 pub mod compiler;
 pub mod glyph;
 pub mod recognizer;
+pub mod sim;
 pub mod stroke;
 pub mod templates;
 
@@ -18,6 +19,7 @@ pub use circle::{CircleFit, Coverage, Winding};
 pub use compiler::{CompileRules, Demand, Driver, Firing, Spell, Warning, compile, compile_all};
 pub use glyph::{Glaive, Glyph, GlyphId, Ring, Sign};
 pub use recognizer::{Cloud, Match, Template, classify, cloud_distance, normalize, rank};
+pub use sim::{CastReport, CastRules, Field, Parcel, Sim, SimRules, SubstanceId, Vec2};
 pub use stroke::{path_length, resample};
 pub use templates::{Kind, Recorded};
 

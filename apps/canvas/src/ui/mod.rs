@@ -115,6 +115,8 @@ pub struct ToolState {
     pub spell: bool,
     /// The recogniser board: every recorded rune scored against the ink.
     pub runes: bool,
+    /// The simulation overlay: parcels, cell density, and what it is doing.
+    pub sim: bool,
 }
 
 impl Default for ToolState {
@@ -129,6 +131,7 @@ impl Default for ToolState {
             stamp_gap: 40.0,
             spell: true,
             runes: true,
+            sim: true,
         }
     }
 }
@@ -166,6 +169,7 @@ pub enum Toggle {
     Guides,
     Spell,
     Runes,
+    Sim,
 }
 
 /// A one-shot a button fires.
@@ -182,6 +186,14 @@ pub enum Command {
     SwapPaper,
     /// Writes the pad's non-ring strokes out as a `templates.ron` fragment.
     Record,
+    /// Compiles everything on the pad and casts it into the world.
+    Cast,
+    /// Runs the world, or stops it.
+    PlayPause,
+    /// One tick, so a frame can be read rather than watched.
+    StepOnce,
+    /// Empties the world without touching the ink.
+    ClearWorld,
 }
 
 /// What a button does when clicked.
@@ -319,6 +331,36 @@ pub const TOOLS: &[Tool] = &[
         action: Action::Toggle(Toggle::Spell),
     },
     Tool {
+        section: "cast",
+        label: "cast",
+        hint: "compile every seal on the pad and fire it into the world",
+        action: Action::Run(Command::Cast),
+    },
+    Tool {
+        section: "cast",
+        label: "run",
+        hint: "start or stop the simulation - it steps at a fixed 60Hz",
+        action: Action::Run(Command::PlayPause),
+    },
+    Tool {
+        section: "cast",
+        label: "tick",
+        hint: "one step, so a frame can be read instead of watched",
+        action: Action::Run(Command::StepOnce),
+    },
+    Tool {
+        section: "cast",
+        label: "empty",
+        hint: "clear the world, leaving the ink alone",
+        action: Action::Run(Command::ClearWorld),
+    },
+    Tool {
+        section: "view",
+        label: "world",
+        hint: "the simulation overlay - parcels, density, what it is doing",
+        action: Action::Toggle(Toggle::Sim),
+    },
+    Tool {
         section: "view",
         label: "runes",
         hint: "score the ink against every recorded rune - record adds one",
@@ -388,6 +430,7 @@ pub fn run(
     shape: &mut crate::PaperShape,
     window: &Window,
     last: &mut record::LastRecording,
+    world: &mut crate::sim::Simulation,
 ) {
     // Clamped against the sheet, not just its own range: the window can be
     // resized and the paper swapped for a smaller round one without anyone
@@ -424,6 +467,34 @@ pub fn run(
             shortcuts::clear_all(pad);
         }
 
+        Command::Cast => {
+            // The result goes on the hint line for the same reason recording's
+            // does: nobody is reading a terminal while drawing.
+            let said = world.cast_pad(pad);
+            world.last = Some(said.clone());
+            last.0 = Some(said);
+        }
+        Command::PlayPause => {
+            world.running = !world.running;
+            last.0 = Some(if world.running {
+                "world running".to_string()
+            } else {
+                format!("world paused at tick {}", world.sim.ticks)
+            });
+        }
+        Command::StepOnce => {
+            // Stops first, so a click on `tick` always advances exactly one.
+            world.running = false;
+            world.sim.step();
+            last.0 = Some(format!("tick {}", world.sim.ticks));
+        }
+        Command::ClearWorld => {
+            world.sim.reset();
+            world.running = false;
+            world.last = None;
+            last.0 = Some("world emptied".to_string());
+        }
+
         Command::Record => {
             // The result goes on the panel rather than into a log: the point of
             // the tool is knowing whether the file got written, and a terminal
@@ -444,6 +515,7 @@ pub fn is_on(toggle: Toggle, tools: &ToolState) -> bool {
         Toggle::Guides => tools.guides,
         Toggle::Spell => tools.spell,
         Toggle::Runes => tools.runes,
+        Toggle::Sim => tools.sim,
     }
 }
 
@@ -455,5 +527,6 @@ pub fn flip(toggle: Toggle, tools: &mut ToolState) {
         Toggle::Guides => tools.guides = !tools.guides,
         Toggle::Spell => tools.spell = !tools.spell,
         Toggle::Runes => tools.runes = !tools.runes,
+        Toggle::Sim => tools.sim = !tools.sim,
     }
 }

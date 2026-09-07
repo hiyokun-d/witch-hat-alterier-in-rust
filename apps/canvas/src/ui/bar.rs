@@ -274,6 +274,7 @@ pub fn click(
     mut pad: ResMut<InkPad>,
     mut shape: ResMut<PaperShape>,
     mut last: ResMut<super::record::LastRecording>,
+    mut world: ResMut<crate::sim::Simulation>,
 ) {
     // `just_pressed`, not `pressed`: a held button would fire every frame.
     if !mouse.just_pressed(MouseButton::Left) {
@@ -293,7 +294,7 @@ pub fn click(
             }
             Action::Toggle(toggle) => super::flip(toggle, &mut tools),
             Action::Run(command) => super::run(
-                command, &mut tools, &mut pad, &mut shape, &window, &mut last,
+                command, &mut tools, &mut pad, &mut shape, &window, &mut last, &mut world,
             ),
         },
         _ => {}

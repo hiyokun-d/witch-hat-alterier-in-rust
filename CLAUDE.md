@@ -720,7 +720,13 @@ atelier/
 │       │   ├── stroke.rs     path length + even resampling
 │       │   ├── templates.rs  recorded gestures, loaded from .ron
 │       │   ├── compiler.rs   Glyph → Spell, with validation
-│       │   ├── sim/          particles, fields, reactions
+│       │   ├── sim/          the world a spell acts on
+│       │   │   ├── vec2.rs    a 2-vector, and the operators on it
+│       │   │   ├── parcel.rs  SubstanceId, Parcel, Anchor
+│       │   │   ├── field.rs   Cell, Field — the grid, and where mass moves
+│       │   │   ├── step.rs    SimRules — motion, heat, repetition, expiry
+│       │   │   ├── cast.rs    CastRules — Spell → matter, under §3.2
+│       │   │   └── mod.rs     Sim — a world, its rules, how far it has run
 │       │   └── tests/        one file per module above — see §5
 │       └── the-magic-assets/
 │           ├── sigils.ron    34 sigils + capabilities
@@ -731,6 +737,7 @@ atelier/
         └── src/
             ├── main.rs      app, InkPad, capture, paper, ink
             ├── shortcuts.rs undo / redo / clear on &mut InkPad
+            ├── sim.rs       the world in the app: FixedUpdate 60Hz, cast_pad
             ├── debug.rs     on-screen overlay — Claude's, see §0
             ├── ui/          tool panel: place, guides, toggles — see §4.8
             │   ├── mod.rs   plugin, ToolState, the TOOLS table
@@ -780,8 +787,8 @@ M2  Window & pen      ██████████ 5/5   ✅
 M3  Ink               ██████████ 7/7   ✅
 M4  Recognizer        ██████████ 9/9   ✅
 M5  Compiler ring     ██████████ 8/8   ✅
-M6  Elements/physics  ░░░░░░░░░░ 0/8   ← current
-M7  Reactions         ░░░░░░░░░░ 0/8
+M6  Elements/physics  ██████████ 8/8   ✅
+M7  Reactions         ░░░░░░░░░░ 0/8   ← current
 M8  Web build         ░░░░░░░░░░ 0/7
 M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
@@ -791,10 +798,10 @@ M4 came in at nine tasks, not the eight first planned: M4.2b — assembling
 strokes into rings — was scoped as part of M4.2 and turned out to be its own
 piece of work.
 
-**Current task:** M6.1 — the first element instance, and the field it lives in.
-`Spell` now carries everything the simulation needs: what drives it, how
-strongly, which way it leans, how much of its effort is spin, what substance it
-demands and whether it must find it.
+**Current task:** M7.1 — the first reaction between two element instances.
+`sim` now has parcels, a field, a fixed step, and a cast that turns a compiled
+`Spell` into matter under real conservation rules. What it has no notion of is
+two substances *meeting*.
 
 **The one thing still blocking the recognizer is not code.** `templates.ron`
 ships empty and the shapes have to be traced. `record` writes them now, so the
@@ -854,21 +861,120 @@ is what puts anything in it.
   `record` **moves an uncarvable file to `.bak` before overwriting**: tracing a
   rune is the expensive half of this project, and the recorder must not eat one.
 
-**The M6 map, eight tasks:**
+**Two more found by sweeping rather than by screenshot:**
+
+- **The panel's own hints were tofu too.** `bar.rs`, `mod.rs` and `record.rs` all
+  printed `— · ° → § − ⌘ ⇧ ⌫`, so `(⌘Z)` read as three boxes. Every string the
+  shell puts on screen is ASCII now; `⌘Z` is `Cmd Z`. The one survivor is
+  `record.rs`'s `BEGIN` marker, which lives inside the `.ron` file and never
+  renders — changing it would orphan a file already written.
+- **The cloud preview has always been drawn underneath the tool panel.** The
+  panel is twenty-odd rows tall, so open it owns the entire right edge, and the
+  preview box has sat at the top right since M4.6. The overlay now insets by the
+  panel's width while it is open. `PANEL_RESERVE` **duplicates** `bar.rs`'s
+  `EDGE + PANEL_W` rather than reading it: §0 says a change to real code that
+  exists only for the overlay is the wrong change, and the cost of drift here is
+  a box twenty pixels off, never a wrong answer.
+
+**Two more off the second board screenshot, and one of them was the lie again:**
+
+- **The readout was compiling a `Glyph` it built by hand.** §9 claimed the spell
+  block ran the whole pad through `compile_all`; it did not. It assembled one
+  glyph from the inspected ring and called `compile`, which meant `unnamed` was
+  never set — so a ring covered in four marks reported *bare ring, this is an
+  explosion*, the exact lie `Warning::Unreadable` exists to stop. It also could
+  never report nesting or links, because rules 4, 5 and 6 are questions about
+  several glyphs and `compile` only ever sees one. It calls
+  `assembly::glyphs` + `compile_all` now and indexes by ring slot — the two lists
+  are index-aligned, one glyph per ring.
+- **The font fix belonged in one place, not thirty.** Replacing `—` by hand in
+  every string missed the ones core owns: `Warning`'s own `Display` writes `—`,
+  so `bare ring [] this is an explosion` still had two boxes in it. `plain()` now
+  flattens a whole readout at the point text becomes pixels, and anything it does
+  not know becomes `?` rather than a box, so the next unforeseen glyph reports
+  itself. Sanitising in the shell rather than in core is the same call §4.4 makes
+  about pixels: which glyphs a font has is a fact about this shell, and core is
+  entitled to write a proper dash in a `Display` impl.
+
+**Where M6 landed** — a compiled spell finally does something:
 
 ```
-M6.1  Vec2, SubstanceId, Parcel, Field — the nouns
-M6.2  world ↔ cell under stress: bounds, clamping, what falls off the edge
-M6.3  fixed-timestep integration — gravity, velocity, position (§4.3)
-M6.4  Spell → parcels; `demand.must_find` takes from the field, never from nothing
-M6.5  heat between parcel and cell; Repetition resets state (§2.2)
-M6.6  lifetime — rule 8: neat seals last, Fleeting ones do not
-M6.7  the panel and the overlay (§4.8): run, pause, step, see the field
-M6.8  conservation audit — mass in equals mass out, as property tests
+crates/magic-core/src/sim/
+  vec2.rs    a 2-vector, written rather than depended on
+  parcel.rs  SubstanceId, Parcel, Anchor, AMBIENT
+  field.rs   Cell, Field - the grid, and the only place mass moves
+  step.rs    SimRules, step - motion, heat, repetition, expiry
+  cast.rs    CastRules, cast - Spell -> matter
+  mod.rs     Sim - a world, its rules, and how far it has run
+apps/canvas/src/sim.rs   the shell's copy: FixedUpdate at 60Hz, cast_pad
 ```
 
-`docs/m6.1-first-parcel.md` is the written guide for the first one: thirty steps,
-every symbol defined, signatures and test names only.
+- **M6.1–M6.2, the nouns.** `Vec2` is written rather than pulled in: `glam`
+  would satisfy §4.1 fine, but sixty lines against a third dependency in a crate
+  that has two is not a trade worth making. `Point` was not the answer — it
+  carries `stroke_id`, which is a fact about ink, and a parcel of steam was never
+  drawn. `Field::cell_at` checks the sign **before** casting to `usize`, because
+  casting `-1.0` saturates to `0` in Rust and would file something off the left
+  edge into the first column.
+- **A cell is a summary, never authored.** Density, temperature and flow are all
+  recomputed by `settle` from the parcels; writing one directly would mean the
+  parcel it should have come from is missing. Mass-weighted, so a speck cannot
+  outvote a boulder — and `settle` is idempotent, which is a test, because it
+  runs every frame.
+- **M6.3, determinism, and the M5.6 lesson applied in advance.** Fixed timestep,
+  no clock, no randomness, parcels in a `Vec` walked in slice order. `step` reads
+  every parcel's cell into a list *before* mutating anything, so a parcel
+  changing its own cell mid-pass cannot make the answer depend on where it
+  happened to sit in the list. `simulation_state_at_frame_n_is_identical_across_runs`
+  is §5's own property, and it passes.
+- **M6.4, and the reason §3.2 was worth encoding.** `Demand.must_find` becomes
+  `Field::take`, which drains the nearest parcels first and returns what it
+  actually got. Wind moves air but cannot create it, so a wind seal in an empty
+  room returns `NothingFound` and raises nothing at all. Aeriforms creates air,
+  so it raises its own. The audit walks **every elemental sigil in the
+  catalogue** and asserts mass appears from nothing only where the wiki says it
+  may — a capability model that nothing enforces is just documentation.
+- **Rule 9 is energy, not matter.** A discharge creates nothing: it shoves what
+  is in reach outward and heats it, and in an empty room it does nothing visible,
+  which is the honest answer rather than a puff of invented smoke. Four tests.
+- **Canon's four region cases decide where parcels appear.** `AllSameSide` fans
+  them along the heading, `AllInward` puts them inside the ring, `AllOutward`
+  outside it, `Opposed` on the ring itself as canon's floating drops. Computed by
+  M1R's `arrangement`, unused until now.
+- **§2.4's spin/reach split becomes velocity.** `reach` pushes outward, `spin`
+  pushes along the tangent, and the two always sum to one because `Spin`
+  guarantees it. Tilt trading reach for rotation is visible on screen.
+- **M6.5, repetition is a simulation rule outright.** Canon: "continuously resets
+  affected objects to the state they held when the spell took hold, temperature
+  included". `Parcel::anchor` is a snapshot of exactly the three fields that can
+  drift, and a repetition-driven cast sets it on everything it raises. It is a
+  *pull*, not a snap, because canon's own word for the effect is spring-like —
+  and the stiffness had to go from 6.0 to 20.0 after a test caught a held parcel
+  sagging 19px under gravity. A sag is not a reset.
+- **M6.6, lifetime, and canon rule 8.** `Fleeting` is the wiki's own word for a
+  ring too rough to hold, so its parcels last a tenth as long as an `Active`
+  seal's rather than merely less.
+- **M6.8, conservation, and one design decision it forced.** A parcel that
+  reaches the edge is turned back rather than deleted — **ours** (§2.6), and the
+  alternative was worse: vanishing loses mass silently, which would make every
+  conservation property untestable. So the world has walls, and every test that
+  matters is written against `Field::mass`.
+- **What is deliberately not modelled yet:** no reaction between substances, no
+  phase change, no density-driven buoyancy. That is M7, and inventing it early
+  would be exactly the guess §2 warns against.
+
+*Reaches it from the panel (§4.8):* a new **cast** section — **`cast`** compiles
+every seal on the pad through `compile_all` and fires it, **`run`** starts and
+stops the world, **`tick`** advances exactly one step so a frame can be read
+rather than watched, **`empty`** clears the world without touching the ink. In
+`view`, **`world`** toggles the overlay: the grid, every cell holding mass, and
+each parcel as a dot sized by mass and coloured by heat, with a whisker showing
+where it is going. The inspector grew a `world` block — state, tick, simulated
+seconds, parcel count, total mass, total heat, momentum, hottest parcel, and what
+the last cast did.
+
+`docs/m6.1-first-parcel.md` is the written guide to the first task, kept as
+written: thirty steps, every symbol defined.
 
 *(was M5.7 — the two rules that had no way in from the panel)* Nesting and links compile correctly and can only be reached from tests,
 because nothing on the pad detects a ring inside a ring or a line between two

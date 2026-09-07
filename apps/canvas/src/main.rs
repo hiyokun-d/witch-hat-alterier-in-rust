@@ -5,6 +5,7 @@ use magic_core::Point;
 
 mod debug;
 mod shortcuts;
+mod sim;
 mod ui;
 
 use shortcuts::{TapCounter, clear, clear_all, command_held, redo, undo};
@@ -172,6 +173,9 @@ fn main() {
         // Ways to build a seal without drawing one. Same deal — delete this
         // line and `mod ui;` and the pen still works.
         .add_plugins(ui::ToolbarPlugin)
+        // What a compiled spell actually does. Delete this line and `mod sim;`
+        // and the pad, the recognizer and the compiler are untouched.
+        .add_plugins(sim::SimPlugin)
         .insert_resource(ClearColor(DESK))
         .init_resource::<InkPad>()
         .init_resource::<PaperShape>()

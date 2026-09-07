@@ -102,6 +102,35 @@ const PREVIEW_FRAME: Color = Color::srgba(0.55, 0.30, 0.75, 0.45);
 /// something you can see rather than only read.
 const TEMPLATE_MARK: Color = Color::srgba(0.92, 0.74, 0.28, 0.85);
 
+/// A parcel, drawn as a dot. Warm where it is hot, cool where it is not.
+const PARCEL_COLD: Color = Color::srgb(0.30, 0.55, 0.88);
+const PARCEL_HOT: Color = Color::srgb(0.95, 0.45, 0.15);
+
+/// The grid the parcels live in. Faint — it is a ruler, not content.
+const FIELD_GRID: Color = Color::srgba(0.35, 0.45, 0.55, 0.16);
+
+/// A cell with mass in it.
+const FIELD_FULL: Color = Color::srgba(0.30, 0.60, 0.75, 0.55);
+
+/// Degrees above ambient at which a parcel is drawn fully hot.
+///
+/// **Ours**, and only a colour ramp — nothing reads it back.
+const HOT_AT: f32 = 200.0;
+
+/// Smallest and largest a parcel is drawn, in pixels.
+const PARCEL_DOT: (f32, f32) = (1.5, 7.0);
+
+/// How much of the right edge the tool panel claims while it is open.
+///
+/// Mirrors `ui::bar`'s own `EDGE + PANEL_W`, and duplicated on purpose. The
+/// panel is twenty-odd rows tall, so when it is open it owns the whole right
+/// edge and anything drawn there is drawn underneath it. §0 keeps this file
+/// deletable, and an accessor added to `bar.rs` purely so the overlay could
+/// read this would be a change to real code that exists only for the overlay —
+/// which §0 says is the wrong change. If the panel is resized and this drifts,
+/// the cost is a preview box twenty pixels off, never a wrong answer.
+const PANEL_RESERVE: f32 = 14.0 + 152.0;
+
 /// How many ranked runes the board lists before it stops counting.
 const RANKED_SHOWN: usize = 10;
 
@@ -282,6 +311,7 @@ impl Plugin for DebugOverlayPlugin {
                     draw_guides,
                     draw_stroke_ends,
                     draw_fits,
+                    draw_world,
                 )
                     .after(crate::capture_stroke)
                     // Everything above is skipped outright when hidden, rather
@@ -547,11 +577,152 @@ fn place_inspector(
     panel.translation.y = half.y - MARGIN;
 }
 
+/// Flattens text to what the shipped font can actually draw.
+///
+/// The default font has no box-drawing, no typographic dashes, no `deg` sign —
+/// they all render as an empty box, which is how `bare ring [] this is an
+/// explosion` reached the screen. Sanitising *here* rather than in `magic-core`
+/// is the same call §4.4 makes about pixels: what glyphs a font has is a fact
+/// about this shell, and core is entitled to write `—` in a `Display` impl.
+///
+/// Applied to whole readouts, so a warning added to core years from now cannot
+/// reintroduce the bug.
+fn plain(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\u{2014}' | '\u{2013}' | '\u{2212}' | '\u{2500}' => '-',
+            '\u{00b7}' => '|',
+            '\u{00d7}' => 'x',
+            '\u{2588}' => '#',
+            '\u{2591}' => '.',
+            other if other.is_ascii() => other,
+            // Anything unforeseen becomes a visible marker rather than a box,
+            // so the next one of these is reported instead of puzzled over.
+            _ => '?',
+        })
+        .collect()
+}
+
+/// What the world is doing, appended under the spell block.
+///
+/// Reads the simulation and prints it. Decides nothing (§4.2) — every number
+/// here is one `magic_core::sim` already computed.
+fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState>) -> String {
+    if !tools.is_none_or(|state| state.sim) {
+        return String::new();
+    }
+    let Some(world) = world else {
+        return String::new();
+    };
+
+    let field = &world.sim.field;
+    let hottest = field
+        .parcels()
+        .iter()
+        .map(|parcel| parcel.temperature)
+        .fold(f32::NEG_INFINITY, f32::max);
+
+    format!(
+        "\n-- world --\n         state      {}   tick {}   t {:.2}s\n         grid       {}x{} cells of {:.0}px\n         parcels    {}   mass {:.2}   heat {:.0}\n         motion     momentum {:.0}, {:.0}   hottest {}\n         last cast  {}",
+        if world.running { "RUNNING" } else { "paused" },
+        world.sim.ticks,
+        world.sim.elapsed(),
+        field.width(),
+        field.height(),
+        field.cell_size(),
+        field.parcels().len(),
+        field.mass(),
+        field.heat(),
+        field.momentum().x,
+        field.momentum().y,
+        if hottest.is_finite() {
+            format!("{hottest:.0}")
+        } else {
+            "-".to_string()
+        },
+        world.last.as_deref().unwrap_or("nothing cast yet"),
+    )
+}
+
+/// Draws the world: the grid, whatever is in each cell, and every parcel.
+fn draw_world(
+    world: Option<Res<crate::sim::Simulation>>,
+    tools: Option<Res<ToolState>>,
+    mut gizmos: Gizmos<DebugGizmos>,
+) {
+    if !tools.is_none_or(|state| state.sim) {
+        return;
+    }
+    let Some(world) = world else {
+        return;
+    };
+    let field = &world.sim.field;
+
+    let (min, max) = field.bounds();
+    gizmos.rect_2d(
+        Isometry2d::from_translation(Vec2::new((min.x + max.x) * 0.5, (min.y + max.y) * 0.5)),
+        Vec2::new(max.x - min.x, max.y - min.y),
+        FIELD_GRID,
+    );
+
+    // Only cells holding something. Drawing all 2304 every frame would be a
+    // grey wash that says nothing.
+    let size = field.cell_size();
+    for col in 0..field.width() {
+        for row in 0..field.height() {
+            let Some(cell) = field.cell_by(col, row) else {
+                continue;
+            };
+            if cell.density <= 0.0 {
+                continue;
+            }
+            let at = field.cell_center(col, row);
+            gizmos.rect_2d(
+                Isometry2d::from_translation(Vec2::new(at.x, at.y)),
+                Vec2::splat(size * 0.92),
+                FIELD_FULL,
+            );
+        }
+    }
+
+    for parcel in field.parcels() {
+        let heat = ((parcel.temperature - magic_core::sim::AMBIENT) / HOT_AT).clamp(0.0, 1.0);
+        let color = PARCEL_COLD.mix(&PARCEL_HOT, heat);
+        // Radius from mass, so a heavy parcel reads as heavy. Square-rooted
+        // because area is what the eye compares, not radius.
+        let radius = (PARCEL_DOT.0 + parcel.mass.max(0.0).sqrt() * 2.0).min(PARCEL_DOT.1);
+        gizmos.circle_2d(
+            Isometry2d::from_translation(Vec2::new(parcel.at.x, parcel.at.y)),
+            radius,
+            color,
+        );
+        // Where it is going. Scaled down hard — a parcel at 900px/s would draw
+        // a line off the screen.
+        let travel = Vec2::new(parcel.velocity.x, parcel.velocity.y) * 0.05;
+        if travel.length_squared() > 1.0 {
+            let from = Vec2::new(parcel.at.x, parcel.at.y);
+            gizmos.line_2d(from, from + travel, color);
+        }
+    }
+}
+
 /// Pins the recogniser board below the cloud preview it belongs to.
-fn place_matches(window: Single<&Window>, mut panel: Single<&mut Transform, With<MatchLine>>) {
+fn place_matches(
+    window: Single<&Window>,
+    tools: Option<Res<ToolState>>,
+    mut panel: Single<&mut Transform, With<MatchLine>>,
+) {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
-    panel.translation.x = half.x - MARGIN;
+    panel.translation.x = half.x - MARGIN - panel_reserve(tools.as_deref());
     panel.translation.y = half.y - PREVIEW_SIZE - PREVIEW_MARGIN * 2.0;
+}
+
+/// How far in from the right edge the overlay has to start drawing.
+fn panel_reserve(tools: Option<&ToolState>) -> f32 {
+    match tools {
+        Some(state) if state.open => PANEL_RESERVE,
+        _ => 0.0,
+    }
 }
 
 /// Which ring the cursor is inspecting: the one whose edge it is nearest.
@@ -596,12 +767,13 @@ fn inspected(rings: &[assembly::RingCandidate], cursor: Option<Vec2>) -> Option<
 fn draw_cloud_preview(
     gizmos: &mut Gizmos<DebugGizmos>,
     window: &Window,
+    inset: f32,
     cloud: &recognizer::Cloud,
     best: Option<&recognizer::Cloud>,
 ) {
     let half = Vec2::new(window.width(), window.height()) * 0.5;
     let center = Vec2::new(
-        half.x - PREVIEW_MARGIN - PREVIEW_SIZE * 0.5,
+        half.x - inset - PREVIEW_MARGIN - PREVIEW_SIZE * 0.5,
         half.y - PREVIEW_MARGIN - PREVIEW_SIZE * 0.5,
     );
 
@@ -759,6 +931,7 @@ fn update_inspector(
     camera: Single<(&Camera, &GlobalTransform)>,
     tools: Option<Res<ToolState>>,
     lore: Res<Lore>,
+    world: Option<Res<crate::sim::Simulation>>,
     mut panel: Single<&mut Text2d, With<InspectorLine>>,
 ) {
     let rings = circle_search(&pad);
@@ -819,7 +992,7 @@ fn update_inspector(
         assembly::Activation::Active => "ACTIVE - circuit closed".to_string(),
     };
 
-    panel.0 = format!(
+    panel.0 = plain(&format!(
         "-- ring {slot}/{} {:?} -- {}\n\
          geometry   centre {:.0}, {:.0}      radius {:.1}\n\
          \x20          circumference {circumference:.0}px   area {:.0}px^2\n\
@@ -834,7 +1007,7 @@ fn update_inspector(
          \x20          {} pts   reach {:.0}px   x{fill:.2} of the ring   element: ?\n\
          quality    {quality:.3}  {bar}\n\
          canon      r{:.0} -> strength    neat {quality:.2} -> duration\n\
-         verdict    {verdict}{}",
+         verdict    {verdict}{}{}",
         rings.len(),
         ring.strokes,
         if by_hover { "hover" } else { "first" },
@@ -892,8 +1065,9 @@ fn update_inspector(
         held.points,
         held.extent,
         fit.radius,
-        spell_report(ring, &held, &lore, tools.as_deref()),
-    );
+        spell_report(&pad, &rings, slot, &lore, tools.as_deref()),
+        world_report(world.as_deref(), tools.as_deref()),
+    ));
 }
 
 /// The catalogue, parsed once at startup.
@@ -1063,13 +1237,13 @@ fn update_matches(
     let cursor = cursor_world(&window, camera, camera_transform);
 
     let Some((slot, _)) = inspected(&rings, cursor) else {
-        panel.0 = out + "gesture    - no ring to look inside\n";
+        panel.0 = plain(&out) + "gesture    - no ring to look inside\n";
         return;
     };
 
     let ink = subject_ink(&pad, &rings[slot]);
     let Some(cloud) = recognizer::normalize(&ink, stroke::MATCH_POINTS) else {
-        panel.0 = out + "gesture    - nothing to normalise\n";
+        panel.0 = plain(&out) + "gesture    - nothing to normalise\n";
         return;
     };
 
@@ -1081,7 +1255,7 @@ fn update_matches(
     ));
 
     if all.is_empty() {
-        panel.0 = out
+        panel.0 = plain(&out)
             + "ranked     nothing to rank - no rune has a shape yet\n\
                \x20          trace one inside the ring, press record, and it\n\
                \x20          is scored here on the next frame\n";
@@ -1138,7 +1312,7 @@ fn update_matches(
     });
 
     out.push_str("threshold  none - how close is close enough is the compiler's call");
-    panel.0 = out;
+    panel.0 = plain(&out);
 }
 
 /// What the ring compiles to, appended to the inspector.
@@ -1152,8 +1326,9 @@ fn update_matches(
 /// The shell decides nothing here: it builds a `Glyph`, calls `compile`, and
 /// prints what comes back (§4.2).
 fn spell_report(
-    ring: &assembly::RingCandidate,
-    held: &assembly::RingContents,
+    pad: &InkPad,
+    rings: &[assembly::RingCandidate],
+    slot: usize,
     lore: &Lore,
     tools: Option<&ToolState>,
 ) -> String {
@@ -1164,10 +1339,17 @@ fn spell_report(
         return "\nspell      catalogue failed to load".to_string();
     };
 
-    let mut glyph = magic_core::Glyph::new(magic_core::GlyphId(0), None, ring.to_ring());
-    glyph.sigil_extent = held.extent;
-
-    let spell = magic_core::compile(&glyph, catalog, &magic_core::CompileRules::default());
+    // Built from the whole pad, not from this ring alone. A hand-assembled
+    // `Glyph` was the bug: it never carried `unnamed`, so a ring covered in
+    // marks nobody can read reported canon rule 9's *bare* ring — the exact lie
+    // `Warning::Unreadable` was added to stop. It also could not know about
+    // nesting or links, because rules 4, 5 and 6 are questions about several
+    // glyphs and `compile` only ever sees one.
+    let glyphs = assembly::glyphs(rings, &pad.points, ON_RING_TOLERANCE);
+    let spells = magic_core::compile_all(&glyphs, catalog, &magic_core::CompileRules::default());
+    let (Some(glyph), Some(spell)) = (glyphs.get(slot), spells.get(slot)) else {
+        return "\nspell      no glyph for this ring".to_string();
+    };
     let warnings = if spell.warnings.is_empty() {
         "none".to_string()
     } else {
@@ -1761,9 +1943,11 @@ fn draw_fits(
     pad: Res<InkPad>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
+    tools: Option<Res<ToolState>>,
     runes: Res<Runes>,
     mut gizmos: Gizmos<DebugGizmos>,
 ) {
+    let inset = panel_reserve(tools.as_deref());
     let rings = circle_search(&pad);
     let (camera, camera_transform) = *camera;
     let focus = inspected(&rings, cursor_world(&window, camera, camera_transform)).map(|(s, _)| s);
@@ -1827,7 +2011,7 @@ fn draw_fits(
                 all.iter().map(|(_, rune)| rune.template.clone()).collect();
             let best =
                 recognizer::classify(&cloud, &shapes).map(|found| &shapes[found.index].cloud);
-            draw_cloud_preview(&mut gizmos, &window, &cloud, best);
+            draw_cloud_preview(&mut gizmos, &window, inset, &cloud, best);
         }
 
         // Detail for the inspected ring only. All of it at once is a smear.
