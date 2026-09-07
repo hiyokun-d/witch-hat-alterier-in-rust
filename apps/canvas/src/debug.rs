@@ -102,23 +102,62 @@ const PREVIEW_FRAME: Color = Color::srgba(0.55, 0.30, 0.75, 0.45);
 /// something you can see rather than only read.
 const TEMPLATE_MARK: Color = Color::srgba(0.92, 0.74, 0.28, 0.85);
 
-/// A parcel, drawn as a dot. Warm where it is hot, cool where it is not.
-const PARCEL_COLD: Color = Color::srgb(0.30, 0.55, 0.88);
-const PARCEL_HOT: Color = Color::srgb(0.95, 0.45, 0.15);
-
-/// The grid the parcels live in. Faint — it is a ruler, not content.
+/// The grid the parcels live in. Faint - it is a ruler, not content.
 const FIELD_GRID: Color = Color::srgba(0.35, 0.45, 0.55, 0.16);
 
 /// A cell with mass in it.
-const FIELD_FULL: Color = Color::srgba(0.30, 0.60, 0.75, 0.55);
+const FIELD_FULL: Color = Color::srgba(0.30, 0.60, 0.75, 0.45);
 
-/// Degrees above ambient at which a parcel is drawn fully hot.
+/// Degrees above ambient at which a parcel is drawn white-hot.
 ///
 /// **Ours**, and only a colour ramp — nothing reads it back.
-const HOT_AT: f32 = 200.0;
+const HOT_AT: f32 = 300.0;
 
 /// Smallest and largest a parcel is drawn, in pixels.
-const PARCEL_DOT: (f32, f32) = (1.5, 7.0);
+const PARCEL_DOT: (f32, f32) = (5.0, 22.0);
+
+/// Parcels sit above the paper and below the panel.
+const PARCEL_Z: f32 = 5.0;
+
+/// What each substance looks like.
+///
+/// A `match` on a name, in a *shell* file, and that is the right place for it:
+/// what colour water is on this screen is not a fact about magic (§4.2), and
+/// `sim` must never learn one. An unknown substance gets a neutral grey rather
+/// than a panic or a guess, so adding one to `reactions.ron` shows up as
+/// something visible and plain rather than as nothing at all.
+fn substance_color(name: &str) -> Color {
+    match name {
+        "water" => Color::srgb(0.18, 0.45, 0.85),
+        "steam" => Color::srgb(0.82, 0.86, 0.92),
+        "ice" => Color::srgb(0.55, 0.85, 0.95),
+        "flame" => Color::srgb(0.95, 0.35, 0.10),
+        "heat" => Color::srgb(0.90, 0.55, 0.20),
+        "light" => Color::srgb(0.98, 0.92, 0.55),
+        "smoke" => Color::srgb(0.42, 0.40, 0.40),
+        "air" => Color::srgb(0.62, 0.82, 0.72),
+        "stone" => Color::srgb(0.48, 0.44, 0.40),
+        "sand" => Color::srgb(0.80, 0.68, 0.42),
+        "soil" => Color::srgb(0.38, 0.28, 0.20),
+        "wood" => Color::srgb(0.55, 0.38, 0.22),
+        "crystal" => Color::srgb(0.70, 0.60, 0.92),
+        "electricity" => Color::srgb(0.65, 0.55, 0.98),
+        "sound" => Color::srgb(0.85, 0.70, 0.85),
+        _ => Color::srgb(0.60, 0.58, 0.55),
+    }
+}
+
+/// One parcel's dot on screen, carrying its slot in the pool.
+///
+/// A sprite rather than a gizmo circle, and that was the whole bug: gizmos draw
+/// **outlines** at one pixel, so a field of parcels was a field of hairline
+/// rings on parchment — technically drawn, practically invisible. A sprite is
+/// filled, and filled is what reads as a substance.
+///
+/// Pooled and reused, the same way `RingLabel` is: parcels come and go every
+/// tick and spawning an entity per parcel per frame is not a thing to do.
+#[derive(Component)]
+struct ParcelDot(usize);
 
 /// How much of the right edge the tool panel claims while it is open.
 ///
@@ -312,6 +351,7 @@ impl Plugin for DebugOverlayPlugin {
                     draw_stroke_ends,
                     draw_fits,
                     draw_world,
+                    draw_parcels,
                 )
                     .after(crate::capture_stroke)
                     // Everything above is skipped outright when hidden, rather
@@ -322,7 +362,10 @@ impl Plugin for DebugOverlayPlugin {
         // Ring labels are spawned on demand, so unlike the fixed readouts there
         // is nothing for `toggle_overlay` to hide. They are dropped instead and
         // rebuilt on the next visible frame.
-        app.add_systems(Update, clear_ring_labels.run_if(not(overlay_visible)));
+        app.add_systems(
+            Update,
+            (clear_ring_labels, clear_parcels).run_if(not(overlay_visible)),
+        );
     }
 }
 
@@ -623,7 +666,38 @@ fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState
         .fold(f32::NEG_INFINITY, f32::max);
 
     format!(
-        "\n-- world --\n         state      {}   tick {}   t {:.2}s\n         grid       {}x{} cells of {:.0}px\n         parcels    {}   mass {:.2}   heat {:.0}\n         motion     momentum {:.0}, {:.0}   hottest {}\n         last cast  {}",
+        "\n-- world --\n         naming     {}\n         pour       {}\n         state      {}   tick {}   t {:.2}s\n         grid       {}x{} cells of {:.0}px\n         parcels    {}   mass {:.2}   heat {:.0}\n         motion     momentum {:.0}, {:.0}   hottest {}\n         holds      {}\n         rules      {} loaded   over {}\n         reacting   {}\n         last cast  {}",
+        // What the `name` section has the pad's seals set to. Worth a line of
+        // its own: with `templates.ron` empty this is the *only* thing that
+        // makes a seal compile to anything but a discharge, so a person who
+        // forgets they left it on fire has no other way to find out.
+        match world.lore.as_ref() {
+            None => "catalogue failed to load".to_string(),
+            Some(catalog) => match tools {
+                Some(state) => match (state.fixture, state.sigil) {
+                    (Some(index), _) => crate::sim::fixture_names(catalog)
+                        .get(index)
+                        .map(|id| format!("spell {id}"))
+                        .unwrap_or_else(|| "spell (out of range)".to_string()),
+                    (None, Some(index)) => crate::sim::sigil_names(catalog)
+                        .get(index)
+                        .map(|id| format!("sigil {}", id.as_str()))
+                        .unwrap_or_else(|| "sigil (out of range)".to_string()),
+                    (None, None) => format!(
+                        "nothing - the recognizer names it, and it knows {} rune(s)",
+                        0
+                    ),
+                },
+                None => "-".to_string(),
+            },
+        },
+        match tools.map(|state| state.pour) {
+            Some(which) => crate::sim::POURABLE
+                .get(which)
+                .map(|(name, temperature)| format!("{name} at {temperature:.0} deg"))
+                .unwrap_or_else(|| "-".to_string()),
+            None => "-".to_string(),
+        },
         if world.running { "RUNNING" } else { "paused" },
         world.sim.ticks,
         world.sim.elapsed(),
@@ -639,6 +713,56 @@ fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState
             format!("{hottest:.0}")
         } else {
             "-".to_string()
+        },
+        // What is actually in the world, by substance. Sorted and totalled, so
+        // a reaction turning one into another is legible as it happens.
+        {
+            let mut tally: Vec<(String, f32)> = Vec::new();
+            for parcel in field.parcels() {
+                match tally
+                    .iter_mut()
+                    .find(|(name, _)| name == parcel.substance.as_str())
+                {
+                    Some((_, mass)) => *mass += parcel.mass,
+                    None => tally.push((parcel.substance.as_str().to_string(), parcel.mass)),
+                }
+            }
+            tally.sort_by(|a, b| a.0.cmp(&b.0));
+            if tally.is_empty() {
+                "nothing".to_string()
+            } else {
+                tally
+                    .iter()
+                    .map(|(name, mass)| format!("{name} {mass:.1}"))
+                    .collect::<Vec<_>>()
+                    .join("   ")
+            }
+        },
+        world.sim.reactions.rules().len(),
+        {
+            let named = world.sim.reactions.substances();
+            if named.is_empty() {
+                "nothing".to_string()
+            } else {
+                named.join(", ")
+            }
+        },
+        {
+            let last = &world.sim.last_reaction;
+            if last.happened() {
+                format!(
+                    "{:.2} mass, {:+.0} heat, {}",
+                    last.converted,
+                    last.heat,
+                    last.fired
+                        .iter()
+                        .map(|(id, mass)| format!("{id} {mass:.2}"))
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                )
+            } else {
+                "nothing this tick".to_string()
+            }
         },
         world.last.as_deref().unwrap_or("nothing cast yet"),
     )
@@ -685,24 +809,118 @@ fn draw_world(
         }
     }
 
+    // Where each parcel is going. The dots themselves are sprites — see
+    // `draw_parcels` — because a gizmo circle is an outline and an outline is
+    // not a substance.
     for parcel in field.parcels() {
-        let heat = ((parcel.temperature - magic_core::sim::AMBIENT) / HOT_AT).clamp(0.0, 1.0);
-        let color = PARCEL_COLD.mix(&PARCEL_HOT, heat);
-        // Radius from mass, so a heavy parcel reads as heavy. Square-rooted
-        // because area is what the eye compares, not radius.
-        let radius = (PARCEL_DOT.0 + parcel.mass.max(0.0).sqrt() * 2.0).min(PARCEL_DOT.1);
-        gizmos.circle_2d(
-            Isometry2d::from_translation(Vec2::new(parcel.at.x, parcel.at.y)),
-            radius,
-            color,
-        );
-        // Where it is going. Scaled down hard — a parcel at 900px/s would draw
-        // a line off the screen.
         let travel = Vec2::new(parcel.velocity.x, parcel.velocity.y) * 0.05;
-        if travel.length_squared() > 1.0 {
+        if travel.length_squared() > 4.0 {
             let from = Vec2::new(parcel.at.x, parcel.at.y);
-            gizmos.line_2d(from, from + travel, color);
+            gizmos.line_2d(
+                from,
+                from + travel,
+                parcel_color(parcel, &world.sim.materials),
+            );
         }
+    }
+}
+
+/// A parcel's colour: its substance, brightened as it heats.
+///
+/// Hue says *what*, brightness says *how hot*. Mixing toward white rather than
+/// toward orange keeps the two readable at once — a hot rock and a flame are
+/// still different colours, which they would not be on a single cold-to-hot
+/// ramp. That ramp was the first version and it made every substance look the
+/// same at temperature.
+fn parcel_color(parcel: &magic_core::sim::Parcel, materials: &magic_core::sim::Materials) -> Color {
+    use magic_core::sim::Phase;
+
+    let material = materials.get(parcel.substance.as_str());
+    let heat = ((parcel.temperature - magic_core::sim::AMBIENT) / HOT_AT).clamp(0.0, 1.0);
+
+    // Glow is a property of the substance, heat is a property of this parcel.
+    // Both brighten, and keeping them separate is what lets a cold light still
+    // read as light and a hot stone still read as stone.
+    let lift = (heat * 0.7 + material.glow * 0.3).clamp(0.0, 0.95);
+    let color = substance_color(parcel.substance.as_str()).mix(&Color::WHITE, lift);
+
+    // A gas you can see through, a solid you cannot. Without this, steam and
+    // stone are the same object in different colours — which was the complaint.
+    let alpha = match material.phase {
+        Phase::Gas => 0.30 + heat * 0.45,
+        Phase::Liquid => 0.90,
+        Phase::Solid | Phase::Granular => 1.0,
+        Phase::Radiant => 0.75 + heat * 0.25,
+    };
+    color.with_alpha(alpha)
+}
+
+/// Draws every parcel as a filled dot, reusing a pool of sprites.
+fn draw_parcels(
+    mut commands: Commands,
+    world: Option<Res<crate::sim::Simulation>>,
+    tools: Option<Res<ToolState>>,
+    mut dots: Query<(&ParcelDot, &mut Sprite, &mut Transform, &mut Visibility)>,
+) {
+    let showing = tools.is_none_or(|state| state.sim);
+    let parcels: &[magic_core::sim::Parcel] = match (&world, showing) {
+        (Some(world), true) => world.sim.field.parcels(),
+        _ => &[],
+    };
+
+    let Some(world) = world.as_ref() else {
+        for (_, _, _, mut visible) in &mut dots {
+            *visible = Visibility::Hidden;
+        }
+        return;
+    };
+
+    let mut seen = 0usize;
+    for (slot, mut sprite, mut transform, mut visible) in &mut dots {
+        seen = seen.max(slot.0 + 1);
+        match parcels.get(slot.0) {
+            Some(parcel) => {
+                // Side from mass, square-rooted: the eye compares area, not
+                // width, so a parcel twice as heavy should not be twice as wide.
+                //
+                // Then scaled by phase. A gas occupies far more room per unit
+                // mass than a liquid does, which is the difference between a
+                // puff of steam and a bead of water — and it is the same fact
+                // as the density the simulation is already using.
+                let materials = &world.sim.materials;
+                let spread = match materials.get(parcel.substance.as_str()).phase {
+                    magic_core::sim::Phase::Gas => 2.4,
+                    magic_core::sim::Phase::Radiant => 1.8,
+                    magic_core::sim::Phase::Liquid => 1.0,
+                    _ => 0.85,
+                };
+                let side =
+                    (PARCEL_DOT.0 + parcel.mass.max(0.0).sqrt() * 6.0 * spread).min(PARCEL_DOT.1);
+                sprite.color = parcel_color(parcel, materials);
+                sprite.custom_size = Some(Vec2::splat(side));
+                transform.translation = Vec3::new(parcel.at.x, parcel.at.y, PARCEL_Z);
+                *visible = Visibility::Inherited;
+            }
+            // Hidden rather than despawned: the count swings every tick and a
+            // pool that churns entities is a pool that stutters.
+            None => *visible = Visibility::Hidden,
+        }
+    }
+
+    for slot in seen..parcels.len() {
+        commands.spawn((
+            Sprite::default(),
+            Transform::from_xyz(0.0, 0.0, PARCEL_Z),
+            ParcelDot(slot),
+        ));
+    }
+}
+
+/// Drops the parcel pool when the overlay is hidden, exactly as the ring
+/// captions are dropped — sprites are not gizmos and do not stop on their own.
+fn clear_parcels(mut commands: Commands, dots: Query<Entity, With<ParcelDot>>) {
+    for entity in &dots {
+        commands.entity(entity).despawn();
     }
 }
 

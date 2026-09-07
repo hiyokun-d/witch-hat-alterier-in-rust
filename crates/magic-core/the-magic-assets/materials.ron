@@ -1,0 +1,131 @@
+// What each substance *is*, physically — the reason fire rises and water falls.
+//
+// ── PARTLY OURS ─────────────────────────────────────────────────────────────
+//
+// CLAUDE.md §2.6: canon has no physics at all, so a continuous simulation is
+// our extension. But the numbers here are not invented out of nothing — most of
+// them are real, and where they are, that is worth more than a tuned guess:
+//
+//   air     1.2   kg/m3 at 20C, sea level
+//   steam   0.6   water vapour is M=18 against air's M=29, so ~0.62
+//   smoke   0.9   mostly hot air carrying soot
+//   water   1000  by definition
+//   ice     917   which is why it floats
+//   stone   2600  granite
+//   sand    1600  loose, not packed
+//
+// `flame` has no density of its own on purpose. Fire is *hot gas*, and it rises
+// for exactly one reason: the ideal gas law makes hot air thin. So flame is air
+// with a temperature, and buoyancy does the rest. Giving it a hand-picked
+// density would have hidden the actual mechanism behind a magic number.
+//
+// ── FORMAT ──────────────────────────────────────────────────────────────────
+//
+//   density     kg/m3 at `reference_temp`. Gases thin out as they heat
+//   phase       Gas | Liquid | Solid | Granular | Radiant
+//   drag        speed shed per second. Gases are light and wide, so they lose
+//               motion fast; a stone does not
+//   cohesion    how strongly a parcel matches the mean flow of its cell, per
+//               second. This is what makes water move as a body and fire not
+//   turbulence  px/s2 of deterministic swirl, scaled by how hot it is. Fire
+//               flickers, water does not
+//   friction    Solid and Granular only: how much a resting parcel is held
+//   glow        rendering only, 0..1. Core never reads it
+//   note        why
+(
+    version: 1,
+    // The medium everything is buoyant against, at the temperature it sits at.
+    ambient_density: 1.2,
+    reference_temp: 20.0,
+    materials: [
+        (
+            id: "air",
+            density: 1.2, phase: Gas,
+            drag: 2.2, cohesion: 0.4, turbulence: 40.0, friction: 0.0, glow: 0.0,
+            note: "The medium. Neutrally buoyant against itself until it heats.",
+        ),
+        (
+            id: "flame",
+            density: 1.2, phase: Gas,
+            drag: 2.6, cohesion: 0.25, turbulence: 260.0, friction: 0.0, glow: 1.0,
+            note: "Air with a temperature. At 800C it is a third of the density of the room, so it climbs at three gravities - that IS why fire shoots up.",
+        ),
+        (
+            id: "heat",
+            density: 1.2, phase: Gas,
+            drag: 2.4, cohesion: 0.3, turbulence: 120.0, friction: 0.0, glow: 0.5,
+            note: "Flame's gentler sibling: the snugstone effect, warmth with no flame.",
+        ),
+        (
+            id: "steam",
+            density: 0.6, phase: Gas,
+            drag: 2.0, cohesion: 0.35, turbulence: 90.0, friction: 0.0, glow: 0.15,
+            note: "Lighter than air even when it has cooled, because water vapour is a lighter molecule. Steam rises on its own terms, not only because it is hot.",
+        ),
+        (
+            id: "smoke",
+            density: 0.9, phase: Gas,
+            drag: 2.8, cohesion: 0.3, turbulence: 130.0, friction: 0.0, glow: 0.0,
+            note: "Hot air carrying soot. Rises gently and spreads, which is the visible difference from flame.",
+        ),
+        (
+            id: "sound",
+            density: 1.2, phase: Gas,
+            drag: 4.0, cohesion: 0.1, turbulence: 60.0, friction: 0.0, glow: 0.1,
+            note: "Modelled as a gas because the calling sigil has to act on something. Honestly a placeholder.",
+        ),
+        (
+            id: "water",
+            density: 1000.0, phase: Liquid,
+            drag: 1.1, cohesion: 7.0, turbulence: 0.0, friction: 0.0, glow: 0.0,
+            note: "High cohesion is the whole difference from a gas: parcels match their neighbours' flow, so water moves as a body and pools instead of dispersing.",
+        ),
+        (
+            id: "ice",
+            density: 917.0, phase: Solid,
+            drag: 0.5, cohesion: 1.2, turbulence: 0.0, friction: 0.85, glow: 0.0,
+            note: "Lighter than water, which is why ice floats - and it falls through air like anything else.",
+        ),
+        (
+            id: "crystal",
+            density: 2500.0, phase: Solid,
+            drag: 0.4, cohesion: 1.0, turbulence: 0.0, friction: 0.9, glow: 0.35,
+            note: "Crystalize's product. Canon does not say what decides crystal over ice, so neither do we.",
+        ),
+        (
+            id: "stone",
+            density: 2600.0, phase: Solid,
+            drag: 0.35, cohesion: 0.8, turbulence: 0.0, friction: 0.95, glow: 0.0,
+            note: "Granite. Falls hard, lands, and stops.",
+        ),
+        (
+            id: "sand",
+            density: 1600.0, phase: Granular,
+            drag: 0.7, cohesion: 2.5, turbulence: 0.0, friction: 0.7, glow: 0.0,
+            note: "Between a solid and a liquid, which is what Granular is for: it piles, but it also flows.",
+        ),
+        (
+            id: "soil",
+            density: 1300.0, phase: Granular,
+            drag: 0.8, cohesion: 3.0, turbulence: 0.0, friction: 0.8, glow: 0.0,
+        ),
+        (
+            id: "wood",
+            density: 700.0, phase: Solid,
+            drag: 0.6, cohesion: 1.0, turbulence: 0.0, friction: 0.8, glow: 0.0,
+            note: "Lighter than water, so it would float if we modelled a water surface. We do not, yet.",
+        ),
+        (
+            id: "light",
+            density: 0.0, phase: Radiant,
+            drag: 6.0, cohesion: 0.0, turbulence: 0.0, friction: 0.0, glow: 1.0,
+            note: "Radiant means gravity and buoyancy are both skipped. Light does not fall, and pretending it weighs something would be worse than saying so.",
+        ),
+        (
+            id: "electricity",
+            density: 0.0, phase: Radiant,
+            drag: 8.0, cohesion: 0.0, turbulence: 400.0, friction: 0.0, glow: 1.0,
+            note: "Also radiant, and violently turbulent - the only way a bolt reads as a bolt.",
+        ),
+    ],
+)

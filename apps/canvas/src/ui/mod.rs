@@ -80,6 +80,18 @@ pub enum Shape {
     /// A claw. Neither sign nor sigil, and the only mark canon lets you draw
     /// outside the ring — place it straddling the line.
     Glaive,
+    /// A straight keystone. Length is power, direction is aim (§2.4) — the
+    /// mark to use when what is being tested is balance rather than shape.
+    Bar,
+    /// A three-sided mark, after canon's note that whorling wind is
+    /// three-sided. A stand-in for that shape, not a claim to be it.
+    Triangle,
+    /// Ink that turns more than once. The ring search must *reject* this, and
+    /// this is how to make one without a steady hand.
+    Spiral,
+    /// The line joining two seals — canon rule 5. Drag from one ring to
+    /// another. Until this existed, rule 5 had no way in from the panel.
+    Link,
 }
 
 /// What the pad does with a press.
@@ -129,6 +141,10 @@ pub struct ToolState {
     /// Which canon spell fixture from `spells.ron` the pad's seals are built
     /// as. Overrides `sigil`, because a fixture names one.
     pub fixture: Option<usize>,
+    /// Which substance the `pour` button drops.
+    pub pour: usize,
+    /// Which seal the `preset` button lays down.
+    pub preset: usize,
 }
 
 impl Default for ToolState {
@@ -146,6 +162,8 @@ impl Default for ToolState {
             sim: true,
             sigil: None,
             fixture: None,
+            pour: 0,
+            preset: 0,
         }
     }
 }
@@ -217,6 +235,14 @@ pub enum Command {
     PrevFixture,
     /// Back to whatever the recognizer says, which is currently nothing.
     ClearNaming,
+    /// Lays a whole seal down and names it, so nothing has to be drawn.
+    Preset,
+    /// Chooses which preset `preset` lays down.
+    NextPreset,
+    /// Steps through the substances that can be dropped by hand.
+    NextPour,
+    /// Drops the current one in the middle of the world.
+    Pour,
 }
 
 /// What a button does when clicked.
@@ -282,6 +308,30 @@ pub const TOOLS: &[Tool] = &[
         action: Action::Pick(Mode::Place(Shape::Glaive)),
     },
     Tool {
+        section: "place",
+        label: "bar",
+        hint: "a straight keystone - length is power, direction is aim",
+        action: Action::Pick(Mode::Place(Shape::Bar)),
+    },
+    Tool {
+        section: "place",
+        label: "triangle",
+        hint: "a three-sided mark, after whorling wind",
+        action: Action::Pick(Mode::Place(Shape::Triangle)),
+    },
+    Tool {
+        section: "place",
+        label: "spiral",
+        hint: "ink that turns twice - the ring search must reject this",
+        action: Action::Pick(Mode::Place(Shape::Spiral)),
+    },
+    Tool {
+        section: "place",
+        label: "link",
+        hint: "drag from one ring to another - canon rule 5, linked seals",
+        action: Action::Pick(Mode::Place(Shape::Link)),
+    },
+    Tool {
         section: "size",
         label: "radius +",
         hint: "place bigger - canon rule 8, larger seals are stronger",
@@ -343,6 +393,18 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         section: "name",
+        label: "preset",
+        hint: "lay down a whole seal and name it - nothing to draw",
+        action: Action::Run(Command::Preset),
+    },
+    Tool {
+        section: "name",
+        label: "preset >",
+        hint: "choose which seal preset lays down",
+        action: Action::Run(Command::NextPreset),
+    },
+    Tool {
+        section: "name",
         label: "sigil >",
         hint: "name the seal as the next sigil in the catalogue",
         action: Action::Run(Command::NextSigil),
@@ -388,6 +450,18 @@ pub const TOOLS: &[Tool] = &[
         label: "tick",
         hint: "one step, so a frame can be read instead of watched",
         action: Action::Run(Command::StepOnce),
+    },
+    Tool {
+        section: "cast",
+        label: "pour",
+        hint: "drop a blob of the chosen substance in the middle, to watch it react",
+        action: Action::Run(Command::Pour),
+    },
+    Tool {
+        section: "cast",
+        label: "pour >",
+        hint: "choose what pour drops - water, flame, air, ice, stone, steam",
+        action: Action::Run(Command::NextPour),
     },
     Tool {
         section: "cast",
@@ -523,7 +597,7 @@ pub fn run(
         Command::Cast => {
             // The result goes on the hint line for the same reason recording's
             // does: nobody is reading a terminal while drawing.
-            let said = world.cast_pad(pad);
+            let said = world.cast_pad(pad, tools);
             world.last = Some(said.clone());
             last.0 = Some(said);
         }
@@ -543,9 +617,96 @@ pub fn run(
         }
         Command::ClearWorld => {
             world.sim.reset();
+            // Back to a room, not to a vacuum. `reset` empties the field, and
+            // an empty field is the state where a discharge has nothing to
+            // throw and a wind spell has nothing to find.
+            world.fill_air();
             world.running = false;
             world.last = None;
-            last.0 = Some("world emptied".to_string());
+            last.0 = Some("world emptied, air back".to_string());
+        }
+
+        Command::NextSigil | Command::PrevSigil => {
+            let names = world.lore.as_ref().map(crate::sim::sigil_names);
+            let count = names.as_ref().map_or(0, Vec::len);
+            if count == 0 {
+                last.0 = Some("catalogue failed to load".to_string());
+            } else {
+                let step = if command == Command::NextSigil {
+                    1
+                } else {
+                    count - 1
+                };
+                let next = tools.sigil.map_or(0, |at| (at + step) % count);
+                tools.sigil = Some(next);
+                tools.fixture = None;
+                last.0 = names
+                    .map(|names| format!("sigil {}/{count}: {}", next + 1, names[next].as_str()));
+            }
+        }
+        Command::NextFixture | Command::PrevFixture => {
+            let names = world.lore.as_ref().map(crate::sim::fixture_names);
+            let count = names.as_ref().map_or(0, Vec::len);
+            if count == 0 {
+                last.0 = Some("catalogue failed to load".to_string());
+            } else {
+                let step = if command == Command::NextFixture {
+                    1
+                } else {
+                    count - 1
+                };
+                let next = tools.fixture.map_or(0, |at| (at + step) % count);
+                tools.fixture = Some(next);
+                tools.sigil = None;
+                last.0 = names.map(|names| format!("spell {}/{count}: {}", next + 1, names[next]));
+            }
+        }
+        Command::ClearNaming => {
+            tools.sigil = None;
+            tools.fixture = None;
+            last.0 = Some("unnamed - back to what the recognizer says".to_string());
+        }
+
+        Command::NextPreset => {
+            tools.preset = (tools.preset + 1) % crate::sim::PRESETS.len();
+            let (id, what, _) = crate::sim::PRESETS[tools.preset];
+            last.0 = Some(format!("preset {id}: {what}"));
+        }
+        Command::Preset => {
+            let (id, _, signs) = crate::sim::PRESETS[tools.preset];
+            // A fresh pad, because a preset is a known state and leftover ink
+            // would make it something else.
+            shortcuts::clear(pad);
+
+            let radius = tools.stamp_radius;
+            stamp::place(pad, stamp::ring(Vec2::ZERO, radius));
+            for slot in 0..signs {
+                let around = std::f32::consts::TAU * slot as f32 / signs as f32;
+                let at = Vec2::from_angle(around) * (radius * 0.62);
+                // Aimed outward and all the same length: canon's balanced seal,
+                // which is the one that shoots straight up.
+                stamp::place(pad, stamp::sign(at, radius * 0.22, around));
+            }
+
+            // Naming it is the other half. Without this the seal is ink nobody
+            // can read and compiles to rule 9's discharge.
+            tools.fixture = world.preset_fixture(tools.preset);
+            tools.sigil = None;
+            last.0 = Some(match tools.fixture {
+                Some(_) => format!("{id} placed and named - press cast"),
+                None => format!("{id} placed, but the catalogue has no such spell"),
+            });
+        }
+        Command::NextPour => {
+            tools.pour = (tools.pour + 1) % crate::sim::POURABLE.len();
+            let (name, temperature) = crate::sim::POURABLE[tools.pour];
+            last.0 = Some(format!("pour will drop {name} at {temperature:.0} deg"));
+        }
+        Command::Pour => {
+            let said = world.pour(tools.pour, magic_core::sim::Vec2::ZERO);
+            world.last = Some(said.clone());
+            last.0 = Some(said);
+            world.running = true;
         }
 
         Command::Record => {

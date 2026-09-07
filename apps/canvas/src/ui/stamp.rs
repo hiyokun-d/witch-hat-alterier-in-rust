@@ -46,6 +46,13 @@ pub fn draw_shape(
         Shape::Cross => cross(center, radius * 0.45),
         Shape::Sign => sign(center, radius * 0.45, facing),
         Shape::Glaive => glaive(center, radius * 0.35, facing),
+        Shape::Bar => bar(center, radius * 0.45, facing),
+        Shape::Triangle => triangle(center, radius * 0.35, facing),
+        Shape::Spiral => spiral(center, radius * 0.40),
+        // A link is drawn from where you pressed to where you let go, not out
+        // from a centre — it joins two rings (canon rule 5), so both ends
+        // matter and neither is the middle of anything.
+        Shape::Link => link(center, radius, facing),
     }
 }
 
@@ -185,4 +192,73 @@ pub fn glaive(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
             .collect()
     };
     vec![talon(-0.45), talon(0.0), talon(0.45)]
+}
+
+/// A straight keystone: length is power, direction is aim (§2.4).
+///
+/// The plainest sign there is, and the one to reach for when what is being
+/// tested is *balance* rather than shape — four equal bars sum to zero drift,
+/// and lengthening one steers the whole seal.
+pub fn bar(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
+    let along = Vec2::from_angle(facing);
+    let steps = 12;
+    vec![
+        (0..=steps)
+            .map(|i| {
+                let t = i as f32 / steps as f32 * 2.0 - 1.0;
+                center + along * (reach * t)
+            })
+            .collect(),
+    ]
+}
+
+/// A three-sided mark.
+///
+/// Canon notes whorling wind is three-sided and wonders whether that hints at
+/// a fire connection - heating the air the way a hot-air balloon does. This is
+/// a stand-in for that shape, not a claim to be it.
+pub fn triangle(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
+    let corner = |k: usize| {
+        let angle = facing + std::f32::consts::TAU * k as f32 / 3.0;
+        center + Vec2::from_angle(angle) * reach
+    };
+    // One closed stroke. The fitter will not mistake it for a ring: three
+    // corners put the circle fit's rms well past `min_roundness`.
+    vec![vec![corner(0), corner(1), corner(2), corner(0)]]
+}
+
+/// A spiral - ink that turns more than once.
+///
+/// Deliberately something the ring search must *reject*: it covers one turn of
+/// angle while winding two and a half, so `is_simple` fails and it stays as
+/// contents rather than seeding a ring. A tool for reproducing that case
+/// without a steady hand.
+pub fn spiral(center: Vec2, reach: f32) -> Vec<Vec<Vec2>> {
+    let turns = 2.5;
+    let steps = 90;
+    vec![
+        (0..=steps)
+            .map(|i| {
+                let t = i as f32 / steps as f32;
+                let angle = std::f32::consts::TAU * turns * t;
+                center + Vec2::from_angle(angle) * (reach * (0.15 + 0.85 * t))
+            })
+            .collect(),
+    ]
+}
+
+/// The line that joins two seals - canon rule 5.
+///
+/// Drawn from `from` outward, so a drag starting on one ring and ending on
+/// another lands exactly where `assembly::links` looks for it: ink belonging to
+/// neither ring that comes within tolerance of both. Until this existed, rule 5
+/// could only be reached from a test.
+pub fn link(from: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
+    let along = Vec2::from_angle(facing);
+    let steps = 16;
+    vec![
+        (0..=steps)
+            .map(|i| from + along * (reach * i as f32 / steps as f32))
+            .collect(),
+    ]
 }

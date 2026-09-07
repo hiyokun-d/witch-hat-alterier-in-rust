@@ -41,6 +41,12 @@ pub struct CastRules {
     pub max_parcels: usize,
     /// How far out a spell may look for substance, as a multiple of its radius.
     pub reach: f32,
+    /// The ring size a seal's power is quoted against.
+    ///
+    /// Canon rule 8: "larger seals are more powerful than smaller ones". That
+    /// is a ratio with nothing on the other side of it until someone picks a
+    /// reference, so this is the pick. **Ours.**
+    pub reference_radius: f32,
     /// Seconds an `Active` seal's parcels last, per unit of strength.
     pub life_active: f32,
     /// Seconds a `Fleeting` seal's last. Canon's word for a ring too rough to
@@ -67,6 +73,7 @@ impl Default for CastRules {
             parcels_per_sign: 2,
             max_parcels: 64,
             reach: 3.0,
+            reference_radius: 140.0,
             life_active: 6.0,
             life_fleeting: 0.6,
             blast: 400.0,
@@ -157,7 +164,7 @@ pub fn cast(spell: &Spell, at: Vec2, field: &mut Field, rules: &CastRules) -> Ca
     let count = (rules.base_parcels + rules.parcels_per_sign * spell.sign_count)
         .min(rules.max_parcels)
         .max(1);
-    let wanted = strength * rules.mass_per_strength * count as f32;
+    let wanted = strength * rules.mass_per_strength * count as f32 * bulk;
 
     let (available, found, created) = if demand.must_find {
         let got = field.take(&substance, wanted, at, radius * rules.reach);
@@ -176,10 +183,21 @@ pub fn cast(spell: &Spell, at: Vec2, field: &mut Field, rules: &CastRules) -> Ca
         Driver::Sigil(id) => rules.anchoring.contains(&id.as_str()),
         _ => false,
     };
+    // Canon rule 8, both halves. `Fleeting` is the wiki's own word for a ring
+    // too rough to hold at all; `quality` is the rest of the sentence — "neatly
+    // drawn seals are more stable and long-lasting than messy ones" — and it is
+    // continuous, so a good ring and a perfect one must not last the same time.
     let life = match spell.firing {
         Firing::Fleeting => rules.life_fleeting,
         _ => rules.life_active,
-    } * strength.max(0.1);
+    } * strength.max(0.1)
+        * spell.quality.clamp(0.1, 1.0);
+
+    // And the other rule 8 claim: a larger seal is a stronger one. Kept apart
+    // from `intensity`, which is the sigil measured *against* its ring — a big
+    // seal with a small sigil is powerful and unfocused, a small one with a
+    // filling sigil is focused and weak, and both facts have to survive.
+    let bulk = (spell.scale / rules.reference_radius).clamp(0.2, 4.0);
 
     let speed = strength * rules.speed_per_strength;
     let lean = spell.balance.lean();
@@ -243,7 +261,25 @@ fn placement(spell: &Spell, slot: usize, count: usize, radius: f32) -> (Vec2, Ve
             // Only on the ring itself — canon's floating drops.
             RegionPattern::Opposed => (around * radius, around),
         },
-        _ => (around * (radius * 0.8), around),
+        // No region signs, or none that agree. Canon settles this and it is
+        // worth quoting: identical column signs give "a balanced spell that
+        // shoots straight up", and one longer sign "causes uneven pressure
+        // which makes the spell shoot off to the side". So a balanced seal
+        // fires *up*, a leaning one fires the way it leans, and the ring of
+        // parcels the first version emitted was neither.
+        _ => {
+            let lean = spell.balance.lean();
+            let aim = if lean > 0.05 {
+                spell.balance.heading
+            } else {
+                std::f32::consts::FRAC_PI_2
+            };
+            // A narrow fan rather than a line: a jet has width, and one column
+            // of parcels reads as a laser.
+            let spread = (slot as f32 / count as f32 - 0.5) * (std::f32::consts::PI / 5.0);
+            let direction = Vec2::from_angle(aim + spread);
+            (direction * (radius * 0.35), direction)
+        }
     }
 }
 

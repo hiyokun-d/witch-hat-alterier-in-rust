@@ -256,8 +256,14 @@ impl Field {
     /// **Ours** (§2.6), and the alternative was worse: a parcel that leaves has
     /// to either vanish or stop, and vanishing loses mass silently, which would
     /// make every conservation property in M6.8 untestable. So the grid has
-    /// walls, and hitting one costs the outward half of the velocity.
-    pub fn confine(&mut self) {
+    /// walls.
+    ///
+    /// `restitution` is how much speed survives the bounce, `0..=1`. It must
+    /// not be `1.0`: a perfect wall is a trampoline, and the first version made
+    /// a falling stone bounce forever — it never landed, so it never settled,
+    /// and `a_stone_lands_and_stays_put` said so.
+    pub fn confine(&mut self, restitution: f32) {
+        let keep = restitution.clamp(0.0, 1.0);
         let (min, max) = self.bounds();
         // A hair inside, so a parcel resting exactly on the far edge still has
         // a cell — `cell_at` is half-open and `max` itself is outside.
@@ -265,17 +271,17 @@ impl Field {
         for parcel in &mut self.parcels {
             if parcel.at.x < min.x {
                 parcel.at.x = min.x;
-                parcel.velocity.x = parcel.velocity.x.abs();
+                parcel.velocity.x = parcel.velocity.x.abs() * keep;
             } else if parcel.at.x > max.x - skin {
                 parcel.at.x = max.x - skin;
-                parcel.velocity.x = -parcel.velocity.x.abs();
+                parcel.velocity.x = -parcel.velocity.x.abs() * keep;
             }
             if parcel.at.y < min.y {
                 parcel.at.y = min.y;
-                parcel.velocity.y = parcel.velocity.y.abs();
+                parcel.velocity.y = parcel.velocity.y.abs() * keep;
             } else if parcel.at.y > max.y - skin {
                 parcel.at.y = max.y - skin;
-                parcel.velocity.y = -parcel.velocity.y.abs();
+                parcel.velocity.y = -parcel.velocity.y.abs() * keep;
             }
         }
     }

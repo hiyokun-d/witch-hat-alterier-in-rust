@@ -111,7 +111,10 @@ fn rows(window: &Window) -> Vec<Row> {
         let x = half.x - EDGE - PANEL_W * 0.5 - *column as f32 * (PANEL_W + PAD);
         out.push(Row {
             slot,
-            rect: Rect::from_center_size(Vec2::new(x, *top - height * 0.5), Vec2::new(width, height)),
+            rect: Rect::from_center_size(
+                Vec2::new(x, *top - height * 0.5),
+                Vec2::new(width, height),
+            ),
         });
         *top -= height + ROW_GAP;
     };

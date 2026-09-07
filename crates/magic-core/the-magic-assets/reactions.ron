@@ -1,0 +1,134 @@
+// What happens when two element instances meet — and what happens to one on
+// its own when it gets hot or cold enough.
+//
+// ── ENTIRELY OURS ───────────────────────────────────────────────────────────
+//
+// CLAUDE.md §2.6 is explicit about this. Canon has no reactions: spells are
+// discrete effects with no mechanism behind them, and the wiki never says that
+// wind plus water makes anything. Every rule in this file is our extension, and
+// it is a *file* rather than a `match` arm so that arguing with one costs an
+// edit rather than a recompile (§4.4).
+//
+// What is not ours is the constraint the rules have to satisfy. §3.2's
+// capability model means matter is conserved, so `outputs` shares must sum to
+// 1.0 — the loader refuses the file otherwise, because a reaction that quietly
+// mints mass would make every conservation property in the simulation a lie.
+//
+// ── FORMAT ──────────────────────────────────────────────────────────────────
+//
+//   id          what to call it
+//   inputs      substances that must be in the same cell. ONE input is a phase
+//               change; two or more is a reaction
+//   outputs     (substance, share) — shares must total 1.0
+//   min_temp    below this it does not happen. Omit for no floor
+//   max_temp    above this it does not happen. Omit for no ceiling
+//   heat        degrees released (+) or absorbed (-) per unit of mass converted
+//   rate        share of the available mass converted per second
+//   note        why we picked this, in one line
+//
+// Temperatures are in the same degrees as `sim::parcel::AMBIENT`, which is 20.
+(
+    version: 1,
+    reactions: [
+        // ── phase change: one input, a temperature window ──────────────────
+        (
+            id: "boil",
+            inputs: ["water"],
+            outputs: [("steam", 1.0)],
+            min_temp: 100.0,
+            heat: -540.0,
+            rate: 2.0,
+            note: "Water above boiling becomes steam, and takes the latent heat with it - which is why a kettle plateaus.",
+        ),
+        (
+            id: "condense",
+            inputs: ["steam"],
+            outputs: [("water", 1.0)],
+            max_temp: 100.0,
+            heat: 540.0,
+            rate: 1.0,
+            note: "The reverse, and it gives the heat back. A pair of these is what makes a cycle rather than a one-way trip.",
+        ),
+        (
+            id: "freeze",
+            inputs: ["water"],
+            outputs: [("ice", 1.0)],
+            max_temp: 0.0,
+            heat: 80.0,
+            rate: 1.5,
+            note: "Freezing releases heat, which is why a pond holds at zero while it is still turning to ice.",
+        ),
+        (
+            id: "melt",
+            inputs: ["ice"],
+            outputs: [("water", 1.0)],
+            min_temp: 0.0,
+            heat: -80.0,
+            rate: 1.5,
+            note: "And melting takes it back. Crystalize's own effect is unknown in canon, so ice is only ever water here.",
+        ),
+
+        // ── reactions: two inputs meeting in one cell ──────────────────────
+        (
+            id: "steam_burst",
+            inputs: ["water", "flame"],
+            outputs: [("steam", 1.0)],
+            min_temp: 60.0,
+            heat: -200.0,
+            rate: 3.0,
+            note: "Water thrown on flame: the flame is spent, the water leaves as steam, and the room cools. The most legible reaction on screen.",
+        ),
+        (
+            id: "smother",
+            inputs: ["flame", "water"],
+            outputs: [("smoke", 1.0)],
+            max_temp: 60.0,
+            heat: -40.0,
+            rate: 2.0,
+            note: "Cold water on flame does not flash to steam - it puts the fire out and leaves smoke.",
+        ),
+        (
+            id: "burnout",
+            inputs: ["flame"],
+            outputs: [("smoke", 1.0)],
+            max_temp: 180.0,
+            heat: 0.0,
+            rate: 2.5,
+            note: "A flame that has cooled below a couple of hundred degrees is not a flame any more. Without this, spent fire hangs about as cold flame forever - which looks exactly as wrong as it sounds.",
+        ),
+        (
+            id: "fan",
+            inputs: ["flame", "air"],
+            outputs: [("flame", 1.0)],
+            heat: 60.0,
+            rate: 0.2,
+            note: "Air feeds flame. Mass is conserved and the air is consumed into it, which is why a wind spell can make a fire worse.",
+        ),
+        (
+            id: "sublimate",
+            inputs: ["ice", "flame"],
+            outputs: [("steam", 1.0)],
+            min_temp: 100.0,
+            heat: -620.0,
+            rate: 2.0,
+            note: "Flame hot enough takes ice straight past water. Both latent heats at once, which is why the number is the sum.",
+        ),
+        (
+            id: "scald",
+            inputs: ["steam", "stone"],
+            outputs: [("water", 0.5), ("stone", 0.5)],
+            max_temp: 100.0,
+            heat: 200.0,
+            rate: 0.8,
+            note: "Steam meeting cold stone gives its heat up and runs down it. The stone is unchanged, which is what the half-and-half says.",
+        ),
+        (
+            id: "dust",
+            inputs: ["stone", "air"],
+            outputs: [("sand", 0.5), ("air", 0.5)],
+            heat: 0.0,
+            rate: 0.15,
+            note: "Wind wears stone to sand, slowly. Earth cannot create stone (§3.2), so this only ever converts what is there.",
+        ),
+    ],
+)

@@ -143,6 +143,386 @@
                   must equal compile(whole), and compile(half_a) alone must
                   produce nothing (canon rules R2 and R3).",
     ),
+
+    (
+      id: "flamespout",
+      category: "Fire",
+      confidence: Inferred,
+      sigil: "fire",
+      signs: [("column", Around)],
+      sign_counts: {"column": 4},
+      effect: "Shoots a column of flame straight up from the seal, so long as
+               the column signs are all the same length.",
+      note: "The watershot arrangement with the fire sigil in place of water.
+             Inferred, not canon - but it is the swap the wiki's own
+             watershot/pyreball pairing is built on, and canon is explicit that
+             equal column signs shoot straight up.",
+      test_note: "The preset the panel places. Four equal columns must sum to
+                  zero drift, and a zero-drift seal must fire upward rather
+                  than in a ring.",
+    ),
+
+    // ── More of what the source shows ─────────────────────────────────────
+    //
+    // Everything below is added so the panel can *name* a spell without a
+    // traced rune. §2's rule still holds and is visible in every entry: where
+    // the composition is documented it is written out, and where it is not the
+    // entry carries `confidence: Unknown` and an empty sign list rather than a
+    // plausible guess. A spell nobody has decoded is still worth naming — the
+    // hole is the useful part.
+
+    (
+      id: "raincleaver",
+      category: "Water",
+      confidence: Canon,
+      sigil: "water",
+      signs: [("column", Around), ("convergence", Around), ("link", Around)],
+      sign_counts: {"column": 4, "convergence": 4},
+      effect: "Qifrey's cutting spell: many small identical seals linked
+               together, each throwing a thin blade of water.",
+      test_note: "The amplification fixture. Canon says linked identical seals
+                  beat one large spell of the same area, so compile_all must
+                  make n copies worth more than n.",
+      inventor: "Qifrey.",
+    ),
+    (
+      id: "brooms_wind_underfoot",
+      category: "Air",
+      confidence: Canon,
+      sigil: "wind_underfoot",
+      signs: [("stability", Around), ("levitation", Around)],
+      sign_counts: {"stability": 2, "levitation": 2},
+      effect: "Holds a solid object up in the air with something to stand on -
+               how a broom carries a rider rather than merely floating.",
+      note: "The mechanism is unclear in canon; only that this sigil supports
+             solids suspended in air.",
+    ),
+    (
+      id: "vortex",
+      category: "Air",
+      confidence: Inferred,
+      sigil: "whorling_winds",
+      signs: [("column", Around)],
+      sign_counts: {"column": 3},
+      effect: "Air turned through rotation, rising as a whirl.",
+      note: "Whorling winds is three-sided, which the wiki notes may hint at a
+             fire connection - heating the air the way a hot-air balloon does.
+             That is a hint, not an established mechanism.",
+      test_note: "Rotation comes from the sigil here and from sign tilt in
+                  §2.4. Both are canon and they must not double-count.",
+    ),
+    (
+      id: "aeriform_bubble",
+      category: "Air",
+      confidence: Inferred,
+      sigil: "aeriforms",
+      signs: [("orb", Around), ("envelopment", Around)],
+      effect: "Makes air where there was none and holds it in a pocket -
+               the breathable-bubble reading of a sigil that creates air but
+               cannot move it.",
+      test_note: "The conservation counterpart to windrider: aeriforms may
+                  create, wind may not, and the simulation must treat the two
+                  differently.",
+    ),
+    (
+      id: "windrider",
+      category: "Air",
+      confidence: Inferred,
+      sigil: "wind",
+      signs: [("column", Around), ("region", Around)],
+      sign_counts: {"column": 4},
+      region_arrangement: AllSameSide,
+      effect: "Moves the air that is already there, hard, in one direction.",
+      test_note: "Wind cannot create air (§3.2). Cast in a sealed room this
+                  must find nothing and do nothing.",
+    ),
+    (
+      id: "memory_erasure",
+      category: "Forbidden",
+      confidence: Canon,
+      sigil: "obliviation",
+      signs: [],
+      glaives: 3,
+      effect: "Removes a memory. What obliviation actually does is not
+               established; that it is drawn with glaives is.",
+      note: "One of only two uses of glaives anyone has seen. The glaives
+             decide how firmly the spell embeds itself in a body, which is why
+             a memory spell needs them and a watershot does not.",
+      test_note: "The glaive fixture: embedding must read non-zero here and
+                  zero everywhere else.",
+    ),
+    (
+      id: "slime_rendering",
+      category: "Forbidden",
+      confidence: Canon,
+      sigil: None,
+      signs: [],
+      glaives: 2,
+      effect: "The other spell glaives were seen on. Effect not established.",
+      note: "Named with no composition, and that is the entry. §2: an honest
+             hole beats a plausible guess.",
+    ),
+    (
+      id: "doorway",
+      category: "Niche",
+      confidence: Unknown,
+      sigil: "doorways",
+      signs: [("windows", SurroundsSigil)],
+      effect: "Connects two places. The doorways sigil likely names *which*
+               place; windows is drawn as a second ring lining the seal.",
+      note: "Both halves are uncertain. Doorways may have one variant per
+             location, and nobody has enumerated them.",
+    ),
+    (
+      id: "calling_stone",
+      category: "Niche",
+      confidence: Canon,
+      sigil: "calling",
+      signs: [("stillness", Around)],
+      effect: "Repeats a recorded phrase, over and over.",
+      note: "Called a sigil only in the Japanese text.",
+    ),
+    (
+      id: "guidance_lure",
+      category: "Niche",
+      confidence: Canon,
+      sigil: "guidance",
+      signs: [("gathering", Around), ("crosshair", Around)],
+      effect: "Attracts objects matching the parameters the rest of the seal
+               sets - so the other signs are the search, not the effect.",
+      test_note: "The only spell where the signs describe *what to look for*
+                  rather than what to do. Nothing models that yet.",
+    ),
+    (
+      id: "everlasting",
+      category: "Time",
+      confidence: Canon,
+      sigil: "repetition",
+      signs: [("selection", Center)],
+      effect: "Continuously returns the thing it is drawn on to the state it
+               held when the spell took hold, temperature included. Stops rot,
+               repairs damage, makes soft things springy.",
+      test_note: "The one canon effect that is a simulation rule outright.
+                  Every parcel it raises must carry an anchor.",
+    ),
+    (
+      id: "crystalize_seal",
+      category: "Water",
+      confidence: Unknown,
+      sigil: "crystalize",
+      signs: [("solidification", Around)],
+      effect: "Turns air or water into crystal, or into ice. What decides
+               which is unknown, and may be the caster's intent.",
+      note: "Fan-named sigil. The ambiguity is canon's, not ours.",
+    ),
+    (
+      id: "smoke_screen",
+      category: "Fire",
+      confidence: Unknown,
+      sigil: "smoke",
+      signs: [("billow", Center), ("dispersion", Around)],
+      effect: "Makes smoke and spreads it. Whether the sigil can also
+               *manipulate* smoke has never been seen.",
+      note: "Fan-named sigil, and billow can stand in for a sigil on its own.",
+    ),
+    (
+      id: "firework",
+      category: "Fire",
+      confidence: Unknown,
+      sigil: "flickering_light",
+      signs: [("bolt", Around), ("dispersion", Around)],
+      effect: "Unknown. Coco's failed attempt produced a small firework, so
+               the real effect is probably that, stable.",
+      note: "Fan-named. The effect is inferred from a *failure*, which is as
+             weak as evidence gets - recorded as Unknown for that reason.",
+    ),
+    (
+      id: "lightning_throw",
+      category: "Fire",
+      confidence: Unknown,
+      sigil: "lightning",
+      signs: [("bolt", Around), ("region", Around)],
+      region_arrangement: AllSameSide,
+      effect: "Unknown. Likely creates and directs electricity, from the
+               design and from its use in a bolt-throwing spell.",
+      note: "Fan-named sigil.",
+    ),
+    (
+      id: "lantern_light",
+      category: "Light",
+      confidence: Canon,
+      sigil: "light",
+      signs: [("dispersion", Around), ("stillness", Around)],
+      effect: "Magic manifested as light, spread evenly and held in place.",
+      test_note: "Light is a fire variant, so this and pyreball share a family
+                  and must still behave nothing alike.",
+    ),
+    (
+      id: "mistveil",
+      category: "Water",
+      confidence: Inferred,
+      sigil: "water",
+      signs: [("billow", Center), ("concealment", Around)],
+      effect: "Water turned to a cloud that hides what is inside it.",
+      note: "Composition inferred from two signs the wiki describes, not from
+             a glyph anyone has decoded.",
+    ),
+    (
+      id: "rainfall",
+      category: "Water",
+      confidence: Inferred,
+      sigil: "water",
+      signs: [("rain", SurroundsSigil), ("collection", Around)],
+      effect: "Falls as rain over the area rather than shooting anywhere.",
+      note: "Rain surrounds the central sigil rather than sitting beside it,
+             which is why its slot is not Around.",
+    ),
+    (
+      id: "sandserpent",
+      category: "Earth",
+      confidence: Inferred,
+      sigil: "earth",
+      signs: [("weave", SurroundsSigil), ("puppet", Around)],
+      effect: "Sand drawn into a long ribbon the caster steers by mind.",
+      note: "Dancing puppets is one of only two signs steered by thought; the
+             movement it produces follows the sigil.",
+    ),
+    (
+      id: "stonebinding",
+      category: "Earth",
+      confidence: Inferred,
+      sigil: "earth",
+      signs: [("bind", Around), ("solidification", Around)],
+      effect: "Stops a thing moving and binds it into a single mass.",
+    ),
+    (
+      id: "cartpuller",
+      category: "Decorative",
+      confidence: Canon,
+      sigil: "horse",
+      signs: [("pulling", Around)],
+      effect: "Horse spells pull heavy loads - the wiki's own evidence that a
+               decorative sigil can have practical use.",
+      note: "Decorative sigils were retconned from signs in chapter 78, and
+             they are not inert: they sculpt a spell into their shape, target
+             other spells built from the same sigil, and restrict a spell to
+             that shape's real counterparts. None of those three is modelled
+             yet - an open hole, recorded in §9.",
+    ),
+    (
+      id: "owlcat_familiar",
+      category: "Decorative",
+      confidence: Inferred,
+      sigil: "owlcat",
+      signs: [("puppet", Around)],
+      effect: "A spell sculpted into the rough shape of an owlcat.",
+      note: "Owlcat Head is this sigil minus the body, which is the wiki's own
+             evidence that decorative sigils decompose into body parts.",
+    ),
+    (
+      id: "flower_bloom",
+      category: "Decorative",
+      confidence: Canon,
+      sigil: "flower",
+      signs: [],
+      effect: "A flower, whose species is set by five small identical symbols
+               surrounding the sigil.",
+      note: "The only place in the whole grammar with a level of nesting BELOW
+             the sigil. Nothing models those five modifiers - honest hole.",
+    ),
+    (
+      id: "dragonform",
+      category: "Decorative",
+      confidence: Unknown,
+      sigil: "dragon",
+      signs: [],
+      effect: "Named only. Nobody has recorded a dragon spell's composition.",
+    ),
+    (
+      id: "gryphon",
+      category: "Decorative",
+      confidence: Unknown,
+      sigil: "gryphon",
+      signs: [],
+      effect: "Named in the source and never seen. Nobody knows what the
+               sigil even looks like.",
+      note: "Kept precisely because it is empty: the catalogue should be able
+             to say `we know this exists and nothing else`.",
+    ),
+    (
+      id: "pegasus",
+      category: "Decorative",
+      confidence: Unknown,
+      sigil: "pegasus",
+      signs: [],
+      effect: "As gryphon: a name, and nothing after it.",
+    ),
+    (
+      id: "sword_seal",
+      category: "Decorative",
+      confidence: Inferred,
+      sigil: "sword",
+      signs: [("launch", Around), ("convergence", Around)],
+      effect: "A spell sculpted into a blade and thrown.",
+    ),
+    (
+      id: "levelling_float",
+      category: "Niche",
+      confidence: Canon,
+      sigil: None,
+      signs: [("stability", Center)],
+      effect: "Balances the target in a plane in the air, like a float resting
+               on water.",
+      test_note: "Stability can take the place of a sigil. With nothing else in
+                  the ring this must NOT compile as a bare-ring discharge.",
+    ),
+    (
+      id: "billowing",
+      category: "Niche",
+      confidence: Inferred,
+      sigil: None,
+      signs: [("billow", Center), ("collection", Around)],
+      effect: "Turns whatever material is available into a cloud.",
+      test_note: "Billow *requires* collection - it needs something to gather
+                  the material first. Dropping collection must warn, not fail.",
+    ),
+    (
+      id: "mirrorward",
+      category: "Niche",
+      confidence: Inferred,
+      sigil: None,
+      signs: [("reflection", Around), ("selection", Center)],
+      effect: "Targets the reflected image found on the object the seal is
+               drawn on, rather than the object itself.",
+    ),
+    (
+      id: "coilspring",
+      category: "Niche",
+      confidence: Inferred,
+      sigil: "earth",
+      signs: [("coil", Around)],
+      effect: "Manifests matter as a spring. Solids only - coil does nothing
+               to a liquid or a gas.",
+    ),
+    (
+      id: "linked_twin",
+      category: "Niche",
+      confidence: Inferred,
+      sigil: None,
+      signs: [("link", Around)],
+      effect: "Links magic between the object it is drawn on and everything
+               broken off it, removed from it, or made of the same original.",
+    ),
+    (
+      id: "purified_draught",
+      category: "Water",
+      confidence: Inferred,
+      sigil: "water",
+      signs: [("purify", Around), ("collection", Around)],
+      effect: "Separates the impurities out of the water it gathers.",
+      note: "Purify is asymmetric, which the wiki's own taxonomy leaves
+             unclassified - what its size and rotation mean is unknown.",
+    ),
   ],
 
   // Edge cases that must be handled and are easy to get wrong.

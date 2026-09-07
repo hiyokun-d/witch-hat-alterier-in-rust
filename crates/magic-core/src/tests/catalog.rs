@@ -3,6 +3,8 @@
 
 use super::*;
 
+use crate::catalog::Confidence;
+
 /// The real asset files, baked in at compile time.
 ///
 /// `include_str!` is a test convenience only — the shipped path is
@@ -34,8 +36,67 @@ fn the_shipped_assets_load() {
     // 40 headings on Signs Explained, one of which (repetition) was retconned
     // into a sigil, plus four older fan names the page has since dropped.
     assert_eq!(c.signs().count(), 44);
-    assert_eq!(c.spells().count(), 13);
+    // 13 original compiler fixtures, 33 added so the panel can *name* a spell
+    // without a traced rune, and `flamespout` for the preset.
+    assert_eq!(c.spells().count(), 47);
     assert_eq!(c.edge_cases().count(), 7);
+}
+
+/// §2's rule, made mechanical: a spell nobody has decoded must not carry a
+/// made-up composition.
+///
+/// `Unknown` means the source names the spell and not its parts. Writing signs
+/// on one of those would be exactly the plausible guess §2 forbids, and it
+/// would be invisible — it compiles, it looks right, and it is fiction. The
+/// only honest `Unknown` entry is a name, an effect that says what is not
+/// known, and an empty sign list.
+#[test]
+fn a_spell_of_unknown_composition_lists_no_signs() {
+    for def in catalog().spells() {
+        if def.confidence == Confidence::Unknown {
+            assert!(
+                def.signs.is_empty() || def.note.is_some(),
+                "{:?} is Unknown but names signs without saying why",
+                def.id
+            );
+        }
+    }
+}
+
+/// Every spell's ingredients exist. The loader already cross-checks, so this
+/// is here to say out loud that it does — a typo in a new fixture becomes a
+/// load error, never a spell that silently cannot be built.
+#[test]
+fn every_spell_names_only_ingredients_the_catalogue_has() {
+    let c = catalog();
+    for def in c.spells() {
+        if let Some(sigil) = &def.sigil {
+            assert!(
+                c.sigil(sigil).is_some(),
+                "{:?} names sigil {sigil:?}",
+                def.id
+            );
+        }
+        for (sign, _) in &def.signs {
+            assert!(c.sign(sign).is_some(), "{:?} names sign {sign:?}", def.id);
+        }
+    }
+}
+
+/// Glaives are recorded only where canon puts them.
+///
+/// Two spells, both forbidden, and the wiki is explicit that glaives are
+/// nearly forgotten since the Day of the Pact. A third turning up in the data
+/// is a curation mistake, not a discovery.
+#[test]
+fn only_the_two_canon_spells_carry_glaives() {
+    let c = catalog();
+    let with_glaives: Vec<&str> = c
+        .spells()
+        .filter(|def| def.glaives > 0)
+        .map(|def| def.id.as_str())
+        .collect();
+    assert_eq!(with_glaives, vec!["memory_erasure", "slime_rendering"]);
 }
 
 /// Every sign the wiki names has an entry. The list is the wiki's own table of

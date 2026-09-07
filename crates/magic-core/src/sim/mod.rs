@@ -26,13 +26,17 @@
 
 pub mod cast;
 pub mod field;
+pub mod material;
 pub mod parcel;
+pub mod reaction;
 pub mod step;
 pub mod vec2;
 
 pub use cast::{CastOutcome, CastReport, CastRules, cast};
 pub use field::{Cell, Field};
+pub use material::{MaterialDef, Materials, Phase};
 pub use parcel::{AMBIENT, Anchor, Parcel, SubstanceId};
+pub use reaction::{ReactionBook, ReactionDef, ReactionReport, react};
 pub use step::{SimRules, step};
 pub use vec2::Vec2;
 
@@ -47,6 +51,16 @@ pub struct Sim {
     pub field: Field,
     pub rules: SimRules,
     pub cast_rules: CastRules,
+    /// What each substance is, physically. Empty by default and filled by
+    /// whoever loaded the file — the same arrangement as the reaction rules.
+    /// With it empty every substance falls back to a middling liquid, which is
+    /// obviously *something* rather than silently nothing.
+    pub materials: Materials,
+    /// The reaction rules. Empty by default and filled by whoever loaded the
+    /// file — core has no filesystem (§4.1), exactly as with `Catalog`.
+    pub reactions: ReactionBook,
+    /// What the last tick's reactions did, for a readout.
+    pub last_reaction: ReactionReport,
     /// Ticks run. Not a clock — a count, so §4.1 still holds and a replay of
     /// the same inputs lands on the same number.
     pub ticks: u64,
@@ -58,6 +72,9 @@ impl Sim {
             field,
             rules: SimRules::default(),
             cast_rules: CastRules::default(),
+            materials: Materials::default(),
+            reactions: ReactionBook::default(),
+            last_reaction: ReactionReport::default(),
             ticks: 0,
         }
     }
@@ -69,7 +86,11 @@ impl Sim {
     }
 
     pub fn step(&mut self) {
-        step(&mut self.field, &self.rules);
+        // Motion first, then reactions: substances have to be *moved* into the
+        // same cell before they can be said to have met there. Reacting first
+        // would let a parcel react with wherever it used to be.
+        step(&mut self.field, &self.rules, &self.materials, self.ticks);
+        self.last_reaction = react(&mut self.field, &self.reactions, self.rules.dt);
         self.ticks += 1;
     }
 
@@ -79,6 +100,7 @@ impl Sim {
 
     pub fn reset(&mut self) {
         self.field.clear();
+        self.last_reaction = ReactionReport::default();
         self.ticks = 0;
     }
 }

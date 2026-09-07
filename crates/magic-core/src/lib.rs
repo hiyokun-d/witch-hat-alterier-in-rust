@@ -19,7 +19,10 @@ pub use circle::{CircleFit, Coverage, Winding};
 pub use compiler::{CompileRules, Demand, Driver, Firing, Spell, Warning, compile, compile_all};
 pub use glyph::{Glaive, Glyph, GlyphId, Ring, Sign};
 pub use recognizer::{Cloud, Match, Template, classify, cloud_distance, normalize, rank};
-pub use sim::{CastReport, CastRules, Field, Parcel, Sim, SimRules, SubstanceId, Vec2};
+pub use sim::{
+    CastReport, CastRules, Field, MaterialDef, Materials, Parcel, Phase, ReactionBook,
+    ReactionReport, Sim, SimRules, SubstanceId, Vec2,
+};
 pub use stroke::{path_length, resample};
 pub use templates::{Kind, Recorded};
 

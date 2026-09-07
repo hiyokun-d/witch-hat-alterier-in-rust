@@ -305,6 +305,11 @@ pub struct SignDef {
     pub seen_in: Vec<String>,
 }
 
+/// `serde` default for [`SpellDef::confidence`].
+fn canon() -> Confidence {
+    Confidence::Canon
+}
+
 /// A known spell composition, for use as a compiler fixture.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct SpellDef {
@@ -312,6 +317,17 @@ pub struct SpellDef {
     /// The wiki's loose grouping. Free text rather than an enum: it is
     /// editorial, and a new category should not need a recompile.
     pub category: String,
+    /// Where this entry comes from, and how much of it is established.
+    ///
+    /// Defaults to [`Confidence::Canon`] so the fixtures written before this
+    /// field existed keep their meaning. `Inferred` is a wiki or community
+    /// reconstruction; `Unknown` means the spell is *named* in the source and
+    /// its composition is not — §2's honest hole, recorded rather than filled.
+    #[serde(default = "canon")]
+    pub confidence: Confidence,
+    /// Glaives the spell is drawn with. Neither signs nor sigils (§2.1).
+    #[serde(default)]
+    pub glaives: u32,
     /// The sigil at the centre. `None` is legal and load-bearing — several
     /// canon spells are driven by a sign alone.
     #[serde(default)]

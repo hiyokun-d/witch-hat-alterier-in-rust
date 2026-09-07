@@ -176,7 +176,7 @@ fn taking_drains_the_nearest_parcel_first() {
 fn confining_keeps_every_parcel_inside_the_grid() {
     let mut field = grid();
     field.add(air(Vec2::new(-10.0, 100.0), 1.0));
-    field.confine();
+    field.confine(0.25);
     assert!(field.contains(field.parcels()[0].at));
 }
 
@@ -186,7 +186,7 @@ fn confining_conserves_mass() {
     let mut field = grid();
     field.add(air(Vec2::new(-10.0, 100.0), 1.0));
     field.add(air(Vec2::new(999.0, -999.0), 4.0));
-    field.confine();
+    field.confine(0.25);
     assert_eq!(field.mass(), 5.0);
 }
 
@@ -196,6 +196,6 @@ fn a_parcel_driven_off_an_edge_is_turned_back_inward() {
     let mut escaping = air(Vec2::new(-5.0, 20.0), 1.0);
     escaping.velocity = Vec2::new(-50.0, 0.0);
     field.add(escaping);
-    field.confine();
+    field.confine(0.25);
     assert!(field.parcels()[0].velocity.x > 0.0);
 }

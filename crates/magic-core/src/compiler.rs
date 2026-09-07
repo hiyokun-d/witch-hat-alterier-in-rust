@@ -272,6 +272,14 @@ pub struct Spell {
     /// No formula turns this into a number, on purpose — canon gives none, and
     /// the simulation is where a scale finally has to mean something.
     pub scale: f32,
+    /// How neatly the ring was drawn, `0..=1`.
+    ///
+    /// Canon rule 8, and the half of it `firing` throws away: `Fleeting` says
+    /// the ring was *too* rough to hold, and says nothing about the difference
+    /// between a good ring and a perfect one. "Neatly drawn seals are more
+    /// stable and long-lasting than messy ones" is a continuous claim, so the
+    /// continuous number has to survive to whoever runs the spell.
+    pub quality: f32,
     /// How many effective signs the seal carries.
     ///
     /// Canon reads count *separately* from size: "the amount of signs will
@@ -449,6 +457,7 @@ pub fn compile(glyph: &Glyph, catalog: &Catalog, rules: &CompileRules) -> Spell 
         demand,
         intensity,
         scale: radius,
+        quality: glyph.ring.quality(),
         sign_count: effective.len(),
         embedding,
         balance,

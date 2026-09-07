@@ -722,6 +722,8 @@ atelier/
 │       │   ├── compiler.rs   Glyph → Spell, with validation
 │       │   ├── sim/          the world a spell acts on
 │       │   │   ├── vec2.rs    a 2-vector, and the operators on it
+│       │   │   ├── material.rs what a substance IS — density, phase, drag
+│       │   │   ├── reaction.rs what happens when two of them meet
 │       │   │   ├── parcel.rs  SubstanceId, Parcel, Anchor
 │       │   │   ├── field.rs   Cell, Field — the grid, and where mass moves
 │       │   │   ├── step.rs    SimRules — motion, heat, repetition, expiry
@@ -788,7 +790,8 @@ M3  Ink               ██████████ 7/7   ✅
 M4  Recognizer        ██████████ 9/9   ✅
 M5  Compiler ring     ██████████ 8/8   ✅
 M6  Elements/physics  ██████████ 8/8   ✅
-M7  Reactions         ░░░░░░░░░░ 0/8   ← current
+M7  Reactions         ██████████ 8/8   ✅
+M8  Web build         ░░░░░░░░░░ 0/7   ← current
 M8  Web build         ░░░░░░░░░░ 0/7
 M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
@@ -798,10 +801,9 @@ M4 came in at nine tasks, not the eight first planned: M4.2b — assembling
 strokes into rings — was scoped as part of M4.2 and turned out to be its own
 piece of work.
 
-**Current task:** M7.1 — the first reaction between two element instances.
-`sim` now has parcels, a field, a fixed step, and a cast that turns a compiled
-`Spell` into matter under real conservation rules. What it has no notion of is
-two substances *meeting*.
+**Current task:** M8.1 — the wasm build. `magic-core` has been kept
+platform-free since M0 precisely so this is a build-configuration job rather
+than a rewrite; the shell is where the work is.
 
 **The one thing still blocking the recognizer is not code.** `templates.ron`
 ships empty and the shapes have to be traced. `record` writes them now, so the
@@ -895,6 +897,205 @@ is what puts anything in it.
   itself. Sanitising in the shell rather than in core is the same call §4.4 makes
   about pixels: which glyphs a font has is a fact about this shell, and core is
   entitled to write a proper dash in a `Display` impl.
+
+**"It doesn't fire when the ring is closed."** It did. The world was a vacuum.
+
+Canon rule 9 makes a bare ring an explosion, and an explosion is **energy** — it
+shoves and heats what is already there and creates nothing (§3.2 would be a lie
+otherwise). In an empty field that is, correctly, *nothing at all*. So the
+compiler said `Active`, the cast reported `Discharged`, and the screen stayed
+blank, because a room with no air in it is not a room.
+
+`Simulation::fill_air` seeds still air at room temperature across the field at
+startup and after `empty`. One change, three fixes: a discharge has something to
+throw, a wind spell can **find** the air it is forbidden from creating, and fire
+has fuel — so `fan` and `burnout` become visible rather than theoretical.
+
+It cost two performance fixes that were bugs waiting anyway. `react` was building
+a `SubstanceId` — and therefore a `String` — per input, per cell, per rule, per
+tick, purely to run an equality test; with a room full of air that is millions of
+allocations a second, and it compares `&str` now. And each rule now bails before
+bucketing if the field holds none of its inputs. `fan` was also retuned from
+`rate: 1.0, heat: 120` to `0.2, 60`: with air everywhere the old numbers turned
+every spark into a firestorm that ate the room.
+
+**"The water doesn't feel like water, the fire doesn't feel like fire."** Both
+true, and both the same bug: every parcel fell at the same rate under the same
+drag, so water and flame were one simulation wearing two colours. Colour was
+never going to fix it.
+
+**The formula is Archimedes, on a density that varies by the ideal gas law.**
+
+```
+a    = g * (1 - rho_fluid / rho_body)      buoyancy
+rho(T) = rho_ref * T_ref / T               ideal gas, ABSOLUTE temperature
+```
+
+`materials.ron` gives flame `density: 1.2` — **the same as air** — and nothing
+anywhere says "flame goes up". At 800 °C flame is `1073 K` against a room's
+`293 K`, so it is a third of the room's density, the bracket goes to about
+`-2.6`, and it climbs at two and a half gravities. Cool it and it stops climbing
+**on its own**, because the cause went away. That is the whole reason to model
+it rather than script it.
+
+Steam is the argument's other half: `density: 0.6`, because a water molecule is
+lighter than the nitrogen it displaces. **Steam rises after it has gone cold**,
+which no heat rule could produce. Most of the numbers are real — air 1.2, water
+1000, ice 917 (which is why it floats), stone 2600, sand 1600 — and a real number
+beats a tuned one every time.
+
+**Phase is what buoyancy alone cannot do.** Water at 1000 kg/m³ still behaved
+like heavy air until `cohesion` existed: how hard a parcel pulls toward the mean
+flow of its cell, which `Field::settle` was already computing. Water at 7.0 moves
+as a body and pools; flame at 0.25 disperses. Same loop, opposite feel.
+
+**Fire flickers, and it is still deterministic.** §4.3 forbids randomness
+outright, so `swirl` is a *pure function* of quantised position and tick, hashed
+— same seal, same frame, same flicker, every run and every machine. Quantised so
+neighbouring parcels swirl together rather than each doing its own thing, which
+is the difference between a flame and static. Turbulence scales with heat, so a
+cooling flame stops flickering for the same reason it stops rising.
+
+**`Phase::Radiant` is an honest hole made explicit.** Light neither falls nor
+floats, and giving it a weight would have been worse than saying so.
+
+**Three old tests broke immediately, and that was the good news.** They used
+`air` as a stand-in for "a thing", and air at room temperature is now neutrally
+buoyant *in air* and correctly does not fall. `drop_of` makes water now.
+
+**Two bugs the new tests caught:**
+
+- **A stone bounced forever.** `Field::confine` reflected velocity perfectly, and
+  a wall with restitution `1.0` is a trampoline — nothing came to rest, so
+  nothing ever settled. Walls keep 25% of the impact speed now.
+- **A test measured a bounce.** `a_flame_that_cools_stops_rising` compared one
+  flame's climb before and after cooling, but the hot one had already hit the
+  ceiling, where the wall turned its velocity negative and made "slower than
+  before" quietly false. Two fields now, hot against cold, comparing height.
+
+**`burnout` closes the fire loop.** Flame below 180 °C becomes smoke, so spent
+fire does not hang about as cold flame forever — which looked exactly as wrong as
+it sounds.
+
+**Four more marks in `place`**, and one of them closes a gap §9 has been
+carrying since M5.2:
+
+- **`bar`** — a straight keystone. Length is power, direction is aim (§2.4), and
+  no shape to distract from it: four equal bars sum to zero drift, lengthening
+  one steers the seal.
+- **`triangle`** — three-sided, after canon's note that whorling wind is
+  three-sided. A stand-in for that shape, not a claim to be it.
+- **`spiral`** — ink that turns two and a half times while covering one. The ring
+  search must *reject* it (`is_simple` fails), and this is how to produce that
+  case without a steady hand.
+- **`link`** — drag from one ring to another. **Canon rule 5 had no way in from
+  the panel at all**; it was reachable only from tests, which §9 recorded as the
+  largest remaining gap after M5.7. A link is drawn from press to release rather
+  than out from a centre, because it joins two seals and neither end is the
+  middle of anything.
+
+*Reaches it from the panel (§4.8):* **`preset`** lays a whole seal down — ring
+plus four equal column signs — and **names** it, so `cast` fires without anything
+being drawn. **`preset >`** chooses which: flamespout, watershot, raincleaver,
+everlasting, windrider, mistveil. And canon settles where a jet goes: identical
+column signs give "a balanced spell that shoots straight up", one longer sign
+"makes the spell shoot off to the side" — so a balanced seal now fires **up** in
+a narrow fan instead of in a ring, and a leaning one fires the way it leans.
+
+**The effect was invisible, and the reason was one word: outline.**
+
+`gizmos.circle_2d` draws a **hairline ring**, not a disc. A field of parcels was
+a field of one-pixel circles on parchment — technically drawn, practically not
+there, and no amount of colour-picking would have fixed it. Parcels are sprites
+now, pooled and reused the way `RingLabel` is, and `clear_parcels` drops the pool
+when the overlay hides because a sprite is not a gizmo and does not stop on its
+own.
+
+Colour carries two facts at once: **hue is the substance, brightness is the
+heat**. The first version ramped one blue-to-orange scale by temperature alone,
+which made every substance look identical the moment it was hot — a hot stone and
+a flame were the same colour. Mixing each substance's own hue toward white keeps
+both readable. `substance_color` is a `match` on a name in a *shell* file, which
+is the right place for it: what colour water is on this screen is not a fact
+about magic (§4.2), and an unknown substance gets a plain grey rather than a
+guess, so adding one to `reactions.ron` shows up as something visible.
+
+**Thirty-three more spells, and the honest holes kept as holes.**
+`spells.ron` went from 13 fixtures to 46. `SpellDef` gained `confidence` and
+`glaives`:
+
+- `Canon` — composition documented. Raincleaver's linked seals, memory erasure
+  with its three glaives, the horse sigil pulling a cart, everlasting's
+  repetition, flower's five modifier symbols.
+- `Inferred` — reconstructed from signs the wiki *does* describe, never from a
+  glyph anyone decoded. Windrider, mistveil, sandserpent, coilspring.
+- `Unknown` — **named in the source and nothing else**. Gryphon and pegasus are
+  in the catalogue with no signs, no effect beyond "nobody has seen it", and
+  that is the entry. `a_spell_of_unknown_composition_lists_no_signs` makes §2's
+  rule mechanical: writing signs on an undecoded spell would compile, look
+  right, and be fiction.
+- `only_the_two_canon_spells_carry_glaives` pins the other direction — glaives
+  are nearly forgotten since the Day of the Pact, so a third spell growing them
+  is a curation mistake rather than a discovery.
+
+The loader's own cross-check did the rest: all thirty-three name only sigils and
+signs that exist, or the catalogue would not have loaded.
+
+*Reaches it from the panel (§4.8):* `spell >` walks all 46. The world block names
+what the pad is currently set to and what `pour` will drop, because with
+`templates.ron` empty the naming override is the *only* thing making a seal
+compile to anything but a discharge — and a person who forgets they left it on
+fire has no other way to find out.
+
+**Where M7 landed** — two element instances finally meet:
+
+```
+crates/magic-core/the-magic-assets/reactions.ron   10 rules, every one ours
+crates/magic-core/src/sim/reaction.rs              ReactionBook, react
+```
+
+- **The whole module is ours** (§2.6), and it says so at the top. Canon has no
+  reactions — spells are discrete effects with no mechanism, and the wiki never
+  says wind and water make a vortex. So the rules are a `.ron` file (§4.4) and
+  arguing with one costs an edit rather than a recompile.
+- **What is *not* ours is what the rules must obey.** §3.2's capability model
+  only means something if matter is conserved, so a rule's output shares must
+  total `1.0` and `ReactionBook::parse` **refuses the file otherwise** — with a
+  message saying whether it would create or destroy mass. A rule that quietly
+  mints matter would make every conservation property in `sim` a lie, so it is
+  caught at load rather than debugged at runtime.
+- **Momentum rides on the mass.** Products inherit the pooled momentum of what
+  was consumed, split by share, so two parcels meeting head-on leave as one going
+  nowhere. Heat is *accounted*, not conserved: boiling takes 540 degrees out of
+  the world and freezing gives 80 back, which is what makes a kettle plateau and
+  a pond hold at zero.
+- **One input is a phase change, two or more is a reaction.** Same struct, same
+  loop, and the distinction is a `len()` rather than a second concept.
+- **Reactions happen to a *place*.** Parcels are bucketed by cell — a `Vec` of
+  `Vec<usize>` filled in parcel order, never a map (§4.3) — and a rule is tested
+  against the *cell's* temperature, not any one parcel's. The scarcer input sets
+  the pace, so one drop of water cannot consume a bonfire.
+- **Motion runs before reaction**, because substances have to be moved into the
+  same cell before they can be said to have met there. Reacting first would let a
+  parcel react with wherever it used to be.
+- **The rules read the same dialect as the rest of the assets.** The file would
+  not parse at first because `catalog.rs` enables RON's `implicit_some` and
+  `reaction.rs` did not, so `min_temp: 100.0` was a syntax error while
+  `variant_of: "fire"` next door was fine. One dialect across `the-magic-assets`,
+  or every file is its own puzzle.
+- **A test that passed for the wrong reason.**
+  `substances_in_different_cells_do_not_meet` put water and flame in far-apart
+  cells at 200 degrees and checked no steam appeared. Steam appeared — the water
+  simply *boiled*, which is a phase change and nothing to do with meeting. Run at
+  80 degrees it measures what it claims to.
+
+*Reaches it from the panel (§4.8):* **`pour`** drops a ring of one substance in
+the middle of the world and **`pour >`** chooses which — water, flame, air, ice,
+stone, steam, each at a temperature that makes something happen. Two clicks from
+a cold start to a reaction. The world block in the inspector grew three lines:
+what the world **holds** by substance, how many **rules** are loaded and over
+which substances, and what is **reacting** this tick — rule by rule, with the
+mass turned over and the heat released.
 
 **Where M6 landed** — a compiled spell finally does something:
 
