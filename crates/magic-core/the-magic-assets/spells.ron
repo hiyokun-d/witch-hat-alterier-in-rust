@@ -162,6 +162,68 @@
                   than in a ring.",
     ),
 
+    (
+      id: "water_orb",
+      category: "Water",
+      confidence: Inferred,
+      sigil: "water",
+      signs: [("levitation", Around)],
+      sign_counts: {"levitation": 4},
+      effect: "A water sigil surrounded by levitation signs: gravity is
+               reduced and the water is held in suspension as a ball.",
+      note: "Composition from the community spell simulator's own sample, and
+             it agrees with what the wiki says levitation does - floats the
+             target, often shaping it into a sphere when balanced. Inferred
+             rather than canon: the arrangement is reconstructed, not quoted.",
+      test_note: "Four equal levitation signs must sum to zero drift. Canon ties
+                  the sphere to the seal being *balanced*, so an unbalanced one
+                  should not produce one.",
+    ),
+    (
+      id: "fire_shot",
+      category: "Fire",
+      confidence: Inferred,
+      sigil: "fire",
+      signs: [("column", Around), ("region", Around)],
+      sign_counts: {"column": 3, "region": 3},
+      region_arrangement: AllSameSide,
+      effect: "Flame thrown the way the region signs point, rather than
+               straight up.",
+      note: "The watershot/water_bolt pair with fire in place of water. Region
+             is what turns a fountain into a shot.",
+    ),
+    (
+      id: "earth_wall",
+      category: "Earth",
+      confidence: Inferred,
+      sigil: "earth",
+      signs: [("collection", Around), ("convergence", Around), ("solidification", Around)],
+      effect: "Gathers stone and sand and packs it rigid - the serpent's bed
+               arrangement with an earth sigil driving it.",
+    ),
+    (
+      id: "wind_gust",
+      category: "Air",
+      confidence: Inferred,
+      sigil: "wind",
+      signs: [("dispersion", Around), ("region", Around)],
+      sign_counts: {"dispersion": 4},
+      region_arrangement: AllSameSide,
+      effect: "Moves the air that is there, outward and one way.",
+      note: "Wind cannot create air (§3.2), so in a sealed room this does
+             nothing at all - which is the point of having it beside
+             aeriform_bubble.",
+    ),
+    (
+      id: "lightfall",
+      category: "Light",
+      confidence: Inferred,
+      sigil: "light",
+      signs: [("levitation", Around), ("dispersion", Around)],
+      effect: "Light held above the seal and spread - a lamp rather than a
+               beam.",
+    ),
+
     // ── More of what the source shows ─────────────────────────────────────
     //
     // Everything below is added so the panel can *name* a spell without a

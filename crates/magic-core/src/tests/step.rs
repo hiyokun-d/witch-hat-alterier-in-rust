@@ -141,11 +141,14 @@ fn a_hot_parcel_cools_toward_the_room() {
 
 #[test]
 fn two_parcels_in_one_cell_even_out_their_temperatures() {
+    // Water and stone, not two waters: since `coalesce`, two parcels of the
+    // *same* substance sharing a cell become one, and the merged parcel's
+    // temperature is already the weighted mean. The interesting case is two
+    // things that cannot merge and still have to exchange heat.
     let mut field = grid();
-    let mut hot = drop_of(Vec2::new(0.0, 0.0), 1.0);
-    hot.temperature = 200.0;
-    let mut cold = drop_of(Vec2::new(1.0, 0.0), 1.0);
-    cold.temperature = 0.0;
+    let mut hot = made_of("water", Vec2::new(0.0, 0.0), 1.0, 200.0);
+    hot.velocity = Vec2::ZERO;
+    let cold = made_of("stone", Vec2::new(1.0, 0.0), 1.0, 0.0);
     // No gravity, so they stay in the same cell and only heat is under test.
     let rules = SimRules {
         gravity: Vec2::ZERO,
@@ -154,8 +157,8 @@ fn two_parcels_in_one_cell_even_out_their_temperatures() {
     };
     field.add(hot);
     field.add(cold);
-    for _ in 0..60 {
-        step(&mut field, &rules, &stuff(), 0);
+    for tick in 0..60 {
+        step(&mut field, &rules, &stuff(), tick);
     }
     let gap = (field.parcels()[0].temperature - field.parcels()[1].temperature).abs();
     assert!(gap < 20.0, "still {gap} apart");
@@ -327,4 +330,170 @@ fn a_flame_wanders_where_a_stream_of_water_does_not() {
         field.parcels().first().map_or(0.0, |p| p.at.x.abs())
     };
     assert!(sideways("flame", 800.0) > sideways("water", AMBIENT));
+}
+
+// ---- coalescing: the world must not grow without bound ---------------------
+
+#[test]
+fn one_substance_in_one_cell_is_capped_not_collapsed() {
+    // Not down to one. Pressure separates parcels by pushing them away from
+    // where their cell's mass sits, and a single parcel is always exactly
+    // there — merging all the way turned every pool into an immovable dot.
+    let mut field = grid();
+    for i in 0..9 {
+        field.add(made_of("water", Vec2::new(i as f32 * 0.2, 0.0), 1.0, 20.0));
+    }
+    field.coalesce();
+    assert!(field.parcels().len() <= 4, "{}", field.parcels().len());
+    assert_eq!(field.mass(), 9.0);
+}
+
+#[test]
+fn coalescing_is_what_bounds_the_count() {
+    // Nine hundred parcels in one cell must not stay nine hundred.
+    let mut field = grid();
+    for i in 0..900 {
+        field.add(made_of("water", Vec2::new((i % 7) as f32, 0.0), 0.5, 20.0));
+    }
+    field.coalesce();
+    assert!(field.parcels().len() <= 4);
+    assert!((field.mass() - 450.0).abs() < 1e-2);
+}
+
+#[test]
+fn different_substances_never_merge() {
+    let mut field = grid();
+    field.add(made_of("water", Vec2::new(0.0, 0.0), 2.0, 20.0));
+    field.add(made_of("stone", Vec2::new(2.0, 0.0), 3.0, 20.0));
+    field.coalesce();
+    assert_eq!(field.parcels().len(), 2);
+}
+
+#[test]
+fn parcels_in_different_cells_never_merge() {
+    let mut field = grid();
+    field.add(made_of("water", Vec2::new(-100.0, 0.0), 2.0, 20.0));
+    field.add(made_of("water", Vec2::new(100.0, 0.0), 3.0, 20.0));
+    field.coalesce();
+    assert_eq!(field.parcels().len(), 2);
+}
+
+#[test]
+fn merging_conserves_momentum_and_heat() {
+    let mut field = grid();
+    let mut left = made_of("water", Vec2::new(0.0, 0.0), 2.0, 100.0);
+    left.velocity = Vec2::new(10.0, 0.0);
+    let mut right = made_of("water", Vec2::new(2.0, 0.0), 2.0, 0.0);
+    right.velocity = Vec2::new(-10.0, 0.0);
+    field.add(left);
+    field.add(right);
+
+    let momentum = field.momentum();
+    let heat = field.heat();
+    field.coalesce();
+
+    assert!((field.momentum() - momentum).length() < 1e-3);
+    assert!((field.heat() - heat).abs() < 1e-3);
+    assert_eq!(field.mass(), 4.0);
+}
+
+#[test]
+fn an_anchored_parcel_is_never_merged_away() {
+    // Its anchor is a fact about that one parcel; merging would discard it.
+    let mut field = grid();
+    let mut held = made_of("water", Vec2::new(0.0, 0.0), 2.0, 20.0);
+    held.anchor_here();
+    field.add(held);
+    field.add(made_of("water", Vec2::new(2.0, 0.0), 2.0, 20.0));
+    field.coalesce();
+    assert_eq!(field.parcels().len(), 2);
+}
+
+#[test]
+fn a_reacting_world_does_not_grow_without_bound() {
+    // The bug this exists for: 36,000 parcels holding 400 units of mass, and a
+    // weighted mean over that many near-zero masses reporting `NaN`.
+    let mut field = grid();
+    for i in 0..40 {
+        field.add(made_of("water", Vec2::new(i as f32, 0.0), 1.0, 20.0));
+    }
+    for tick in 0..600 {
+        step(&mut field, &SimRules::default(), &stuff(), tick);
+    }
+    assert!(
+        field.parcels().len() < 40,
+        "grew to {}",
+        field.parcels().len()
+    );
+    assert!(field.momentum().is_finite(), "momentum went NaN");
+}
+
+#[test]
+fn scrub_catches_a_ruined_parcel_rather_than_letting_it_spread() {
+    let mut field = grid();
+    let mut wrong = made_of("water", Vec2::ZERO, 1.0, 20.0);
+    wrong.velocity = Vec2::new(f32::NAN, 0.0);
+    field.add(wrong);
+    assert_eq!(field.scrub(), 1);
+    assert!(field.momentum().is_finite());
+}
+
+// ---- pressure: the reason a liquid has a surface -------------------------
+
+#[test]
+fn water_piled_into_one_cell_spreads_out() {
+    // Buoyancy and cohesion together still let water collapse into whichever
+    // cell is lowest and sit there as a dot. A liquid is nearly
+    // incompressible, and `stiffness` is the term that says so.
+    let mut field = grid();
+    for i in 0..12 {
+        field.add(made_of(
+            "water",
+            Vec2::new(i as f32 * 0.1, 0.0),
+            2.0,
+            AMBIENT,
+        ));
+    }
+    let rules = SimRules {
+        gravity: Vec2::ZERO,
+        ..SimRules::default()
+    };
+    for tick in 0..90 {
+        step(&mut field, &rules, &stuff(), tick);
+    }
+
+    let widest = field
+        .parcels()
+        .iter()
+        .map(|p| p.at.x.abs())
+        .fold(0.0f32, f32::max);
+    assert!(widest > 5.0, "the pile never spread: {widest}");
+}
+
+#[test]
+fn a_gas_feels_no_pressure() {
+    // Air has no stiffness, so crowding it does nothing - which is the
+    // difference between a puff spreading by diffusion and a pool levelling.
+    let stuff = stuff();
+    assert_eq!(stuff.get("air").stiffness, 0.0);
+    assert!(stuff.get("water").stiffness > 0.0);
+}
+
+#[test]
+fn pressure_does_not_break_conservation() {
+    let mut field = grid();
+    for i in 0..12 {
+        field.add(made_of(
+            "water",
+            Vec2::new(i as f32 * 0.1, 0.0),
+            2.0,
+            AMBIENT,
+        ));
+    }
+    let before = field.mass();
+    for tick in 0..120 {
+        step(&mut field, &SimRules::default(), &stuff(), tick);
+    }
+    assert!((field.mass() - before).abs() < 1e-2);
+    assert!(field.momentum().is_finite());
 }

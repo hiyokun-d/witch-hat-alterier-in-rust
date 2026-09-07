@@ -470,3 +470,194 @@ fn an_empty_sign_set_leans_nowhere_at_all() {
     assert_eq!(b.drift, 0.0);
     assert_eq!(b.heading, 0.0);
 }
+
+// ── focus ───────────────────────────────────────────────────────────────────
+//
+// Where the power gathers, as against `balance`'s "which way does it go".
+
+/// A keystone at `placement` aimed along `orientation`.
+fn aimed(placement: f32, orientation: f32, size: f32) -> Sign {
+    Sign {
+        kind: "column".into(),
+        placement,
+        orientation,
+        size,
+        reversed: false,
+    }
+}
+
+/// Four keystones at the compass points, each turned by `turn` from outward.
+fn four(turn: f32, size: f32) -> Vec<Sign> {
+    (0..4)
+        .map(|n| {
+            let placement = n as f32 * FRAC_PI_2;
+            aimed(placement, placement + turn, size)
+        })
+        .collect()
+}
+
+/// Everything steers, for the geometry tests.
+fn steers(_: &SignId) -> bool {
+    true
+}
+
+#[test]
+fn four_arrows_pointing_inward_focus_on_the_centre() {
+    // The water orb, and the reading that did not exist. `balance` says this
+    // seal goes nowhere — correctly, the pushes cancel — and is silent about
+    // the thing that makes it an orb: all four are aimed at one point.
+    let found = focus(&four(PI, 1.0), 100.0, steers);
+    assert_eq!(found.convergence, Convergence::Converging);
+    assert!(found.offset() < 0.01, "focus at {:?}", found.at);
+    assert!(found.spread < 0.01);
+    assert_eq!(found.aimed, 4);
+    assert!(found.tightness(100.0) > 0.99);
+}
+
+#[test]
+fn four_arrows_pointing_outward_spread_from_the_centre() {
+    let found = focus(&four(0.0, 1.0), 100.0, steers);
+    assert_eq!(found.convergence, Convergence::Diverging);
+    assert!(found.offset() < 0.01);
+}
+
+#[test]
+fn arrows_all_pointing_one_way_are_a_beam_not_a_focus() {
+    // Canon's "all pointing one side". Parallel rays have no meeting point, and
+    // the solve is singular — detected rather than divided by.
+    let signs: Vec<Sign> = (0..4)
+        .map(|n| aimed(n as f32 * FRAC_PI_2, FRAC_PI_2, 1.0))
+        .collect();
+    let found = focus(&signs, 100.0, steers);
+    assert_eq!(found.convergence, Convergence::Parallel);
+    assert_eq!(found.at, (0.0, 0.0));
+}
+
+#[test]
+fn opposed_arrows_read_as_split() {
+    // Two in, two out: canon's opposed case, where the meeting point is not
+    // something anything is actually aimed at.
+    let signs = vec![
+        aimed(0.0, PI, 1.0),
+        aimed(PI, 0.0, 1.0),
+        aimed(FRAC_PI_2, FRAC_PI_2, 1.0),
+        aimed(-FRAC_PI_2, -FRAC_PI_2, 1.0),
+    ];
+    assert_eq!(focus(&signs, 100.0, steers).convergence, Convergence::Split);
+}
+
+#[test]
+fn one_arrow_aims_at_nothing_in_particular() {
+    // Not "focuses nowhere" — there is nothing to intersect, and saying so is
+    // different from reporting a point.
+    let found = focus(&[aimed(0.0, PI, 1.0)], 100.0, steers);
+    assert_eq!(found.convergence, Convergence::Unaimed);
+    assert_eq!(found.aimed, 1);
+    assert_eq!(found.tightness(100.0), 0.0);
+}
+
+#[test]
+fn a_longer_arrow_drags_the_focus_toward_what_it_aims_at() {
+    // §2.4: size is power, and one sign longer than its neighbours steers the
+    // whole spell. The same claim, read as a *place* rather than a direction.
+    let mut signs = four(PI, 1.0);
+    // Turn the eastern arrow so it aims north of the centre, and make it heavy.
+    signs[0].orientation = PI + 0.4;
+    signs[0].size = 6.0;
+
+    let found = focus(&signs, 100.0, steers);
+    assert!(
+        found.at.1 > 4.0,
+        "the heavy arrow should pull the focus north, got {:?}",
+        found.at
+    );
+}
+
+#[test]
+fn signs_that_do_not_steer_are_left_out() {
+    // The same exclusion `balance` makes, for the same canon reason: a
+    // non-directional sign has no front to point.
+    let signs = four(PI, 1.0);
+    let found = focus(&signs, 100.0, |kind| kind.as_str() != "column");
+    assert_eq!(found.convergence, Convergence::Unaimed);
+    assert_eq!(found.aimed, 0);
+}
+
+#[test]
+fn a_focus_off_the_centre_is_reported_where_it_actually_is() {
+    // Two arrows crossing north of the middle. Nothing here is symmetric, so a
+    // "focus is always the centre" bug would pass every test above and fail
+    // this one.
+    let signs = vec![
+        aimed(0.0, PI - FRAC_PI_4, 1.0),
+        aimed(PI, FRAC_PI_4, 1.0),
+    ];
+    let found = focus(&signs, 100.0, steers);
+    assert_eq!(found.convergence, Convergence::Converging);
+    assert!(found.at.0.abs() < 0.01, "should sit on the vertical axis");
+    assert!(
+        (found.at.1 - 100.0).abs() < 1.0,
+        "should cross a radius above centre, got {:?}",
+        found.at
+    );
+}
+
+#[test]
+fn sloppy_arrows_still_focus_but_less_tightly() {
+    // Tightness is the number worth having: four arrows that nearly meet and
+    // four that meet exactly are both "converging", and only one is an orb.
+    let neat = focus(&four(PI, 1.0), 100.0, steers);
+
+    let mut sloppy = four(PI, 1.0);
+    for (n, sign) in sloppy.iter_mut().enumerate() {
+        sign.orientation += if n % 2 == 0 { 0.35 } else { -0.35 };
+    }
+    let rough = focus(&sloppy, 100.0, steers);
+
+    assert_eq!(rough.convergence, Convergence::Converging);
+    assert!(
+        rough.tightness(100.0) < neat.tightness(100.0),
+        "neat {} vs rough {}",
+        neat.tightness(100.0),
+        rough.tightness(100.0)
+    );
+}
+
+#[test]
+fn focus_does_not_depend_on_the_order_the_signs_were_drawn() {
+    // §4.3 and §3.3: stroke order is never an input. Float addition is not
+    // associative, which is how `balance` broke this exact way.
+    let signs = vec![
+        aimed(0.0, PI + 0.2, 1.3),
+        aimed(FRAC_PI_2, PI + FRAC_PI_2 - 0.1, 0.7),
+        aimed(PI, 0.15, 2.1),
+        aimed(-FRAC_PI_2, FRAC_PI_2 + 0.05, 1.9),
+    ];
+    let forward = focus(&signs, 137.0, steers);
+
+    let mut backward = signs.clone();
+    backward.reverse();
+    assert_eq!(forward, focus(&backward, 137.0, steers));
+}
+
+#[test]
+fn the_four_convergence_cases_are_the_four_canon_region_cases() {
+    // A finding, not a definition: canon states its four cases for region signs
+    // specifically, and they fall straight out of asking where *any* set of
+    // directional signs points. That is what lets a water orb — four levitation
+    // arrows and no region sign at all — be read against them.
+    assert_eq!(
+        Convergence::Converging.as_region(),
+        Some(RegionPattern::AllInward)
+    );
+    assert_eq!(
+        Convergence::Diverging.as_region(),
+        Some(RegionPattern::AllOutward)
+    );
+    assert_eq!(
+        Convergence::Parallel.as_region(),
+        Some(RegionPattern::AllSameSide)
+    );
+    assert_eq!(Convergence::Split.as_region(), Some(RegionPattern::Opposed));
+    assert_eq!(Convergence::Unaimed.as_region(), None);
+}

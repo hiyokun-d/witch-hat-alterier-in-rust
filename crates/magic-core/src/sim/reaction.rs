@@ -193,11 +193,24 @@ impl ReactionBook {
 pub struct ReactionReport {
     /// Mass converted, in total.
     pub converted: f32,
-    /// Which rules fired, and how much each turned over. Sorted by rule order,
-    /// so the list reads the same as the file.
-    pub fired: Vec<(String, f32)>,
+    /// Which rules fired, how much each turned over, and where. Sorted by rule
+    /// order, so the list reads the same as the file.
+    pub fired: Vec<Fired>,
     /// Net degrees-of-mass released. Negative means the world got colder.
     pub heat: f32,
+}
+
+/// One rule, one tick: what it turned over and where it happened.
+///
+/// The position is the mass-weighted mean of the cells the rule fired in, and
+/// it exists so a shell can *show* a reaction. Without it the only honest thing
+/// a renderer could do is print a name in a corner, which is not what a person
+/// watching water hit fire is looking for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fired {
+    pub rule: String,
+    pub mass: f32,
+    pub at: Vec2,
 }
 
 impl ReactionReport {
@@ -218,16 +231,23 @@ pub fn react(field: &mut Field, book: &ReactionBook, dt: f32) -> ReactionReport 
     }
 
     for rule in book.rules() {
-        let turned = apply(field, rule, dt);
+        let (turned, at) = apply(field, rule, dt);
         if turned > 0.0 {
             report.converted += turned;
             report.heat += turned * rule.heat;
-            report.fired.push((rule.id.clone(), turned));
+            report.fired.push(Fired {
+                rule: rule.id.clone(),
+                mass: turned,
+                at,
+            });
         }
     }
 
     if report.happened() {
         field.sweep();
+        // Products are always *new* parcels, so without this a reacting field
+        // gains parcels every tick and never loses any.
+        field.coalesce();
         field.settle();
     }
     report
@@ -249,7 +269,7 @@ fn buckets(field: &Field) -> Vec<Vec<usize>> {
 }
 
 /// One rule, everywhere it applies. Returns the mass it converted.
-fn apply(field: &mut Field, rule: &ReactionDef, dt: f32) -> f32 {
+fn apply(field: &mut Field, rule: &ReactionDef, dt: f32) -> (f32, Vec2) {
     // Cheapest possible early out, and it matters once the room is full of
     // air: bucketing walks every parcel, and most rules have no business
     // being asked about most fields.
@@ -258,11 +278,13 @@ fn apply(field: &mut Field, rule: &ReactionDef, dt: f32) -> f32 {
         .iter()
         .any(|name| !field.parcels().iter().any(|p| p.substance.as_str() == name))
     {
-        return 0.0;
+        return (0.0, Vec2::ZERO);
     }
 
     let cells = buckets(field);
     let mut converted = 0.0;
+    // Where it happened, weighted by how much happened there.
+    let mut placed = Vec2::ZERO;
     let mut spawned: Vec<Parcel> = Vec::new();
 
     for (slot, members) in cells.iter().enumerate() {
@@ -351,12 +373,18 @@ fn apply(field: &mut Field, rule: &ReactionDef, dt: f32) -> f32 {
             spawned.push(product);
         }
         converted += pooled_mass;
+        placed += at * pooled_mass;
     }
 
     for parcel in spawned {
         field.add(parcel);
     }
-    converted
+    let at = if converted > 0.0 {
+        placed * (1.0 / converted)
+    } else {
+        Vec2::ZERO
+    };
+    (converted, at)
 }
 
 #[cfg(test)]

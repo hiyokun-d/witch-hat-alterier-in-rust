@@ -53,6 +53,15 @@ pub fn draw_shape(
         // from a centre — it joins two rings (canon rule 5), so both ends
         // matter and neither is the middle of anything.
         Shape::Link => link(center, radius, facing),
+        // A sigil or a sign from core's own shapes, sized by the drag like
+        // everything else on the panel.
+        Shape::Mark(which) => glyph_mark(which, center, radius * 0.30),
+        // The guide places no ink: it moves where the lesson is drawn. Handled
+        // in `place::drag` before it reaches here.
+        Shape::Guide => Vec::new(),
+        // The eraser draws nothing. `place::drag` handles it before it ever
+        // reaches here, and returning no strokes is what makes that safe.
+        Shape::Erase => Vec::new(),
     }
 }
 
@@ -261,4 +270,73 @@ pub fn link(from: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
             .map(|i| from + along * (reach * i as f32 / steps as f32))
             .collect(),
     ]
+}
+
+/// The whole seal a preset lays down: centre mark, ring, and its keystones.
+///
+/// One function because the button and the hover preview must draw the *same*
+/// thing — a preview that lies is worse than no preview.
+///
+/// **The centre mark is not decoration.** Every seal in the source has a sigil
+/// in the middle; a ring with arrows around an empty hole is not a seal anyone
+/// would recognise, and the first version of `preset` drew exactly that. What
+/// goes there is a stand-in, not a traced rune (§2 — the shapes belong to the
+/// manga), but *something* has to occupy the centre or the drawing is wrong
+/// before the compiler has said a word.
+///
+/// A triangle inside a cross rather than a small ring: a ring in the middle
+/// would be found by the ring search and read as canon rule 4's nesting, which
+/// would change what the seal compiles to. A three-sided mark cannot.
+pub fn seal(center: Vec2, radius: f32, signs: usize, open: bool, inward: bool) -> Vec<Vec<Vec2>> {
+    // An open seal is canon rule 2's prepared spell: everything drawn, waiting
+    // on its last stroke. The gap faces up, where it is easiest to see and to
+    // close by hand.
+    let mut strokes = if open {
+        arc(center, radius, 34.0, std::f32::consts::FRAC_PI_2)
+    } else {
+        ring(center, radius)
+    };
+    strokes.extend(cross(center, radius * 0.26));
+    strokes.extend(triangle(center, radius * 0.17, std::f32::consts::FRAC_PI_2));
+
+    for slot in 0..signs.max(1) {
+        let around = std::f32::consts::TAU * slot as f32 / signs.max(1) as f32;
+        let at = center + Vec2::from_angle(around) * (radius * 0.62);
+        // Outward throws the magic away from the seal; **inward** keeps it
+        // inside, which is canon's `AllInward`: "manifests only inside the
+        // ring". Four arrows pointing at the middle is how you get a ball
+        // rather than a fountain, and it is the arrangement doing it, not the
+        // sigil — the same water sigil with the arrows reversed is a spout.
+        let aim = if inward {
+            around + std::f32::consts::PI
+        } else {
+            around
+        };
+        strokes.extend(sign(at, radius * 0.22, aim));
+    }
+    strokes
+}
+
+/// One of core's built-in marks, placed and scaled.
+///
+/// The shapes live in `magic_core::shapes` rather than here, because what a
+/// fire sigil looks like now decides what a drawing *means* — the recognizer
+/// matches against those same points. The shell draws them; it does not get to
+/// define them (§4.2).
+pub fn glyph_mark(which: &str, center: Vec2, reach: f32) -> Vec<Vec<Vec2>> {
+    magic_core::shapes::built_in()
+        .into_iter()
+        .find(|(id, _, _)| *id == which)
+        .map(|(_, _, strokes)| {
+            strokes
+                .iter()
+                .map(|stroke| {
+                    stroke
+                        .iter()
+                        .map(|&(x, y)| center + Vec2::new(x, y) * reach)
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }

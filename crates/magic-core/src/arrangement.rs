@@ -415,3 +415,248 @@ pub fn spin(signs: &[Sign], directional: impl Fn(&SignId) -> bool) -> Spin {
 #[cfg(test)]
 #[path = "tests/arrangement.rs"]
 mod tests;
+
+/// What a seal's signs, taken together, aim *at*.
+///
+/// [`Balance`] answers "which way will it go"; this answers "where will it
+/// land". Four arrows around a ring all pointing at the middle have zero drift
+/// — they cancel perfectly — and `Balance` correctly reports that the spell
+/// goes nowhere. It is also, just as correctly, silent about the thing that
+/// makes a water orb a water orb: all four are pushing *at the same point*.
+///
+/// So a sign set is read a second way. Each directional sign is a ray, and
+/// where those rays meet is where the power gathers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Convergence {
+    /// The rays meet ahead of the signs: power gathers at a point.
+    Converging,
+    /// The rays meet behind them: power spreads from a point.
+    Diverging,
+    /// Some in, some out. Canon's opposed case, and the meeting point sits
+    /// between them rather than being aimed at by anything.
+    Split,
+    /// The signs all point the same way, so nothing meets — a beam, not a
+    /// focus. Canon's "all pointing one side".
+    Parallel,
+    /// Fewer than two signs that steer. There is nothing to intersect, which is
+    /// not the same as a spell that focuses nowhere.
+    Unaimed,
+}
+
+impl Convergence {
+    /// The canon region case this geometry corresponds to (§2.3), if any.
+    ///
+    /// **A finding rather than a definition.** Canon's four cases are stated for
+    /// region signs specifically, and they fall straight out of asking where
+    /// *any* set of directional signs points: all-inward converges, all-outward
+    /// diverges, all-one-side is parallel, opposed is split. So a seal with no
+    /// region sign in it — a water orb is four levitation arrows — can still be
+    /// read against the same four cases, which is exactly what
+    /// `RegionArrangement::Absent` could never say.
+    pub fn as_region(self) -> Option<RegionPattern> {
+        match self {
+            Convergence::Converging => Some(RegionPattern::AllInward),
+            Convergence::Diverging => Some(RegionPattern::AllOutward),
+            Convergence::Parallel => Some(RegionPattern::AllSameSide),
+            Convergence::Split => Some(RegionPattern::Opposed),
+            Convergence::Unaimed => None,
+        }
+    }
+}
+
+/// Where a seal's power gathers, and how tightly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Focus {
+    /// The meeting point, **relative to the ring's centre**, in the same units
+    /// as the radius it was measured with. Ring-relative rather than absolute
+    /// so the answer is a fact about the seal and not about where on the page
+    /// it was drawn (§3.1's reasoning about position, applied to a reading).
+    ///
+    /// `(0.0, 0.0)` when [`Focus::convergence`] is
+    /// [`Convergence::Unaimed`] or [`Convergence::Parallel`] — there is no
+    /// point, and a zero is the honest placeholder rather than a guess.
+    pub at: (f32, f32),
+    pub convergence: Convergence,
+    /// How far each ray misses the meeting point, root-mean-square, in the same
+    /// units. Zero means they all pass exactly through it.
+    pub spread: f32,
+    /// How many signs actually aimed. Signs that do not steer are excluded, the
+    /// same way [`balance`] excludes them.
+    pub aimed: usize,
+}
+
+impl Focus {
+    /// How far the meeting point sits from the ring's centre.
+    pub fn offset(&self) -> f32 {
+        (self.at.0 * self.at.0 + self.at.1 * self.at.1).sqrt()
+    }
+
+    /// How tightly the power is gathered, `0.0..=1.0`, against a ring radius.
+    ///
+    /// One is every ray passing exactly through one point; zero is a spread as
+    /// wide as the ring itself. **Ours** (§2.6) — canon has focus as a
+    /// qualitative thing and gives no number, and the choice of the ring's own
+    /// radius as the denominator is what makes it mean the same on any seal.
+    pub fn tightness(&self, radius: f32) -> f32 {
+        if radius <= f32::EPSILON || !matches!(
+            self.convergence,
+            Convergence::Converging | Convergence::Diverging | Convergence::Split
+        ) {
+            return 0.0;
+        }
+        (1.0 - self.spread / radius).clamp(0.0, 1.0)
+    }
+}
+
+/// Reads where a sign set aims.
+///
+/// # The maths, and why it is this and not an average
+///
+/// Each steering sign is a ray: it sits at `placement` around a ring of
+/// `radius`, and points along its `orientation`. Averaging those directions
+/// gives [`Balance`] and, for four inward arrows, gives zero — the pushes
+/// cancel, which is true and is not what a person watching wants to know.
+///
+/// The meeting point is the least-squares intersection instead: the point whose
+/// total squared *perpendicular* distance to every ray is smallest. In two
+/// dimensions each ray contributes `n nᵀ` to a `2×2` matrix, where `n` is the
+/// ray's normal, and the solve is a determinant. A singular matrix means every
+/// normal is parallel, which means every ray is — that is the beam case, and it
+/// is detected rather than divided by.
+///
+/// **Weighted by size, because size is power** (§2.4). One arrow drawn longer
+/// than its neighbours drags the focal point toward what it is aimed at, which
+/// is the same claim canon makes about a longer column sign steering the whole
+/// spell.
+///
+/// # What it cannot know
+///
+/// `orientation` from a hand-drawn mark is an *axis*, and which end of it is
+/// the arrowhead is what `reversed` is for. The meeting point does not care —
+/// a line and its reverse intersect at the same place — but converging and
+/// diverging are exactly the pair that swap when a sign is read backwards. So
+/// [`Focus::at`] is reliable and [`Focus::convergence`] inherits whatever the
+/// recognizer decided about direction.
+pub fn focus(signs: &[Sign], radius: f32, directional: impl Fn(&SignId) -> bool) -> Focus {
+    let unaimed = Focus {
+        at: (0.0, 0.0),
+        convergence: Convergence::Unaimed,
+        spread: 0.0,
+        aimed: 0,
+    };
+    if !radius.is_finite() || radius <= 0.0 {
+        return unaimed;
+    }
+
+    // Where each sign sits, which way it points, and how hard it pushes.
+    let mut rays: Vec<((f32, f32), (f32, f32), f32)> = Vec::new();
+    for sign in signs {
+        if !directional(&sign.kind) {
+            continue;
+        }
+        let weight = sign.size.abs();
+        if weight <= f32::EPSILON {
+            continue;
+        }
+        let at = (
+            radius * sign.placement.cos(),
+            radius * sign.placement.sin(),
+        );
+        let heading = if sign.reversed {
+            sign.orientation + std::f32::consts::PI
+        } else {
+            sign.orientation
+        };
+        rays.push((at, (heading.cos(), heading.sin()), weight));
+    }
+    if rays.len() < 2 {
+        return Focus {
+            aimed: rays.len(),
+            ..unaimed
+        };
+    }
+
+    // Summed in a canonical order, not the order the signs arrived in — the
+    // same §4.3 break `balance` was caught by, and the same fix.
+    let mut terms: Vec<[f32; 5]> = rays
+        .iter()
+        .map(|&(at, dir, weight)| {
+            let normal = (-dir.1, dir.0);
+            let along = normal.0 * at.0 + normal.1 * at.1;
+            [
+                weight * normal.0 * normal.0,
+                weight * normal.0 * normal.1,
+                weight * normal.1 * normal.1,
+                weight * normal.0 * along,
+                weight * normal.1 * along,
+            ]
+        })
+        .collect();
+    terms.sort_by(|a, b| {
+        a.iter()
+            .zip(b.iter())
+            .find_map(|(one, two)| match one.total_cmp(two) {
+                std::cmp::Ordering::Equal => None,
+                other => Some(other),
+            })
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut m = [0.0f32; 5];
+    for term in &terms {
+        for (slot, value) in m.iter_mut().zip(term.iter()) {
+            *slot += value;
+        }
+    }
+    let (a00, a01, a11, b0, b1) = (m[0], m[1], m[2], m[3], m[4]);
+
+    // A singular matrix means every normal points the same way, so every ray
+    // does too. Compared against the trace rather than against an absolute
+    // epsilon, because the entries scale with total sign power.
+    let det = a00 * a11 - a01 * a01;
+    let trace = a00 + a11;
+    if !det.is_finite() || det.abs() <= 1e-4 * trace * trace {
+        return Focus {
+            at: (0.0, 0.0),
+            convergence: Convergence::Parallel,
+            spread: 0.0,
+            aimed: rays.len(),
+        };
+    }
+
+    let at = (
+        (a11 * b0 - a01 * b1) / det,
+        (a00 * b1 - a01 * b0) / det,
+    );
+
+    // Ahead of the sign or behind it — the difference between gathering power
+    // at a point and spreading it from one.
+    let (mut ahead, mut behind) = (0usize, 0usize);
+    let (mut miss, mut total) = (0.0f32, 0.0f32);
+    for &(from, dir, weight) in &rays {
+        let to = (at.0 - from.0, at.1 - from.1);
+        if to.0 * dir.0 + to.1 * dir.1 >= 0.0 {
+            ahead += 1;
+        } else {
+            behind += 1;
+        }
+        let off = -dir.1 * to.0 + dir.0 * to.1;
+        miss += weight * off * off;
+        total += weight;
+    }
+
+    Focus {
+        at,
+        convergence: match (ahead, behind) {
+            (_, 0) => Convergence::Converging,
+            (0, _) => Convergence::Diverging,
+            _ => Convergence::Split,
+        },
+        spread: if total > 0.0 {
+            (miss / total).sqrt()
+        } else {
+            0.0
+        },
+        aimed: rays.len(),
+    }
+}

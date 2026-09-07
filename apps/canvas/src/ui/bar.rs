@@ -13,6 +13,7 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
+use bevy::text::FontSource;
 
 use super::{Action, Mode, Pointer, TOOLS, Tool, ToolState};
 use crate::{InkPad, PaperShape, cursor_world};
@@ -27,21 +28,37 @@ const PAD: f32 = 9.0;
 /// Distance from the window's edge to the slab.
 const EDGE: f32 = 14.0;
 
-/// The slab everything sits on. Dark enough to read over parchment and over
-/// the desk, translucent enough that ink underneath is not lost.
-const PANEL: Color = Color::srgba(0.10, 0.08, 0.07, 0.90);
-const FILL_IDLE: Color = Color::srgba(0.21, 0.18, 0.15, 1.0);
-const FILL_HOVER: Color = Color::srgba(0.32, 0.27, 0.22, 1.0);
-/// Armed: the pad is about to do this. Warm, because it is the loud state.
-const FILL_ARMED: Color = Color::srgba(0.76, 0.49, 0.16, 1.0);
-/// A toggle that is on. Quiet, because it is a background condition.
-const FILL_ON: Color = Color::srgba(0.16, 0.44, 0.31, 1.0);
+// The palette is one idea: a workbench, not an interface. Every colour is a
+// thing that exists on a desk in a workshop — tanned hide, iron-gall ink,
+// candle-brass, verdigris — and nothing is a hue a dye could not have made.
+//
+/// The slab everything sits on: dark tooled leather. Translucent enough that
+/// ink underneath is not lost.
+const PANEL: Color = Color::srgba(0.13, 0.10, 0.08, 0.94);
+/// A hairline of brass around the slab, the way a book board is tooled.
+const PANEL_EDGE: Color = Color::srgba(0.62, 0.48, 0.24, 0.55);
+/// A button at rest: the leather again, one shade up so it reads as raised.
+const FILL_IDLE: Color = Color::srgba(0.24, 0.19, 0.15, 1.0);
+const FILL_HOVER: Color = Color::srgba(0.36, 0.29, 0.22, 1.0);
+/// Armed: the pad is about to do this. Candle-brass, because it is the loud
+/// state and warm light is what a workshop is lit by.
+const FILL_ARMED: Color = Color::srgba(0.80, 0.56, 0.20, 1.0);
+/// A toggle that is on. Verdigris — quiet, because it is a background
+/// condition rather than an announcement.
+const FILL_ON: Color = Color::srgba(0.16, 0.42, 0.33, 1.0);
 
-const LABEL: Color = Color::srgb(0.93, 0.89, 0.81);
+/// Chalk on leather.
+const LABEL: Color = Color::srgb(0.94, 0.90, 0.80);
 /// Dark text for the one fill bright enough to need it.
-const LABEL_ARMED: Color = Color::srgb(0.13, 0.10, 0.07);
-const HEADING: Color = Color::srgb(0.58, 0.50, 0.40);
-const HINT: Color = Color::srgb(0.72, 0.65, 0.54);
+const LABEL_ARMED: Color = Color::srgb(0.14, 0.10, 0.06);
+/// Section headings, in the brass the slab is tooled with.
+const HEADING: Color = Color::srgb(0.72, 0.58, 0.34);
+// Bright, and on its own plate. The hint is the only line that says what the
+// panel just *did*, and at low contrast under a two-column slab it was being
+// missed entirely.
+const HINT: Color = Color::srgb(0.99, 0.95, 0.86);
+const HINT_PLATE: Color = Color::srgba(0.08, 0.07, 0.06, 0.92);
+const HINT_SIZE: f32 = 16.0;
 
 /// Above the ink and the paper.
 const PANEL_Z: f32 = 50.0;
@@ -63,6 +80,13 @@ pub enum Slot {
     Button(usize),
     /// The line that explains whatever the pointer is over.
     Hint,
+    /// The plate behind it, so pale text is not sitting on parchment.
+    HintPlate,
+    /// A hairline of brass just outside the slab, the way a book board is
+    /// tooled. Drawn as a slightly larger sprite *behind* the slab rather than
+    /// as an outline, because a sprite has no stroke and four thin rectangles
+    /// would be four more things to keep in step with a resizing window.
+    PanelEdge,
 }
 
 /// A row of the panel: what it is, and the rectangle it occupies.
@@ -166,21 +190,48 @@ fn handle_rect(window: &Window) -> Rect {
         .unwrap_or(Rect::EMPTY)
 }
 
-/// Where the hint sits — just under the slab, right-aligned to its edge.
+/// Where the hint sits: the bottom edge, clear of the slab.
+///
+/// Three things were wrong with it at once. It was anchored at the window's
+/// right edge, which is *underneath* the panel, so the text ran behind the
+/// buttons. It was anchored at its **top**, so a second line grew downward off
+/// the bottom of the screen. And the plate behind it was sized for one line.
+///
+/// So: anchored bottom-right, shifted left past the slab, and grown upward.
 fn hint_at(window: &Window) -> Vec2 {
-    let panel = panel_rect(window);
-    Vec2::new(panel.max.x, panel.min.y - 6.0)
+    let half = Vec2::new(window.width(), window.height()) * 0.5;
+    Vec2::new(half.x - EDGE - PANEL_W - PAD * 2.0, -half.y + EDGE)
 }
 
-pub fn spawn(mut commands: Commands) {
+/// How tall the plate is: two lines and a little air.
+fn hint_height() -> f32 {
+    HINT_SIZE * 2.0 * 1.35 + PAD * 2.0
+}
+
+pub fn spawn(mut commands: Commands, hand: Res<crate::hand::Hand>) {
+    // The script hand for everything on the panel: these are words a person
+    // reads, not columns they scan. Bumped a point as well — Garamond's
+    // x-height is small, which is exactly what makes it look like a book and
+    // exactly what makes it need the extra size.
     let label_font = TextFont {
-        font_size: FontSize::Px(13.0),
+        font: FontSource::Handle(hand.script.clone()),
+        font_size: FontSize::Px(15.0),
         ..default()
     };
     let small_font = TextFont {
-        font_size: FontSize::Px(11.0),
+        font: FontSource::Handle(hand.script.clone()),
+        font_size: FontSize::Px(13.0),
         ..default()
     };
+
+    commands.spawn((
+        Sprite {
+            color: PANEL_EDGE,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 0.0, PANEL_Z - 2.0),
+        Slot::PanelEdge,
+    ));
 
     commands.spawn((
         Sprite {
@@ -241,16 +292,36 @@ pub fn spawn(mut commands: Commands) {
         ));
     }
 
+    // A plate behind it, because the hint sits over the paper and pale text on
+    // parchment is not text.
+    commands.spawn((
+        Sprite::from_color(HINT_PLATE, Vec2::ONE),
+        Transform::from_xyz(0.0, 0.0, PANEL_Z),
+        Slot::HintPlate,
+    ));
+
     commands.spawn((
         Text2d::new(""),
-        small_font,
+        TextFont {
+            font: FontSource::Handle(hand.script.clone()),
+            font_size: FontSize::Px(HINT_SIZE),
+            ..default()
+        },
         TextColor(HINT),
-        // Grows leftward from the panel's edge, so a long hint never runs off
-        // the right of the window.
-        Anchor::TOP_RIGHT,
+        // Bottom-right: the block's *lower* edge is pinned, so a second line
+        // grows upward into the page rather than downward off the screen.
+        Anchor::BOTTOM_RIGHT,
         Transform::from_xyz(0.0, 0.0, PANEL_Z + 1.0),
         Slot::Hint,
     ));
+}
+
+/// Which entry in [`TOOLS`] carries `label`, if any.
+///
+/// Looked up rather than written down: the table is edited constantly and an
+/// index copied into a second file is an index that goes stale silently.
+pub fn tool_named(label: &str) -> Option<usize> {
+    TOOLS.iter().position(|tool| tool.label == label)
 }
 
 /// Works out where the pointer is and whether the panel has claimed it.
@@ -273,6 +344,11 @@ pub fn track_pointer(
         Some(at) => handle_rect(&window).contains(at),
         None => false,
     };
+
+    pointer.over_tool = pointer.at.and_then(|at| match hit(at, &window, &tools) {
+        Some(Slot::Button(index)) => Some(index),
+        _ => None,
+    });
 }
 
 /// Which button, if any, is under `at`.
@@ -364,10 +440,30 @@ pub fn layout(
     for (slot, mut transform, mut visibility, sprite) in &mut pieces {
         let (rect, seen) = match slot {
             Slot::Panel => (slab, shown),
+            // Two pixels proud on every side.
+            Slot::PanelEdge => (
+                Rect::from_corners(slab.min - Vec2::splat(2.0), slab.max + Vec2::splat(2.0)),
+                shown,
+            ),
             // The hint is the only readout when the panel is shut, so it
             // stays: hovering the handle still explains itself.
             Slot::Hint => (
                 Rect::from_center_size(hint, Vec2::ZERO),
+                Visibility::Inherited,
+            ),
+            // Wide enough to cover a long hint. Sized here rather than measured
+            // from the text because Bevy will not tell us how wide a `Text2d`
+            // came out until after it has drawn it, and a plate that lags the
+            // text by a frame flickers.
+            // Wide enough for a long hint and tall enough for two lines. Sized
+            // here rather than measured from the text because Bevy will not say
+            // how wide a `Text2d` came out until after it has drawn it, and a
+            // plate that lags the text by a frame flickers.
+            Slot::HintPlate => (
+                Rect::from_corners(
+                    Vec2::new(hint.x - 1100.0, hint.y - PAD),
+                    Vec2::new(hint.x + PAD, hint.y + hint_height()),
+                ),
                 Visibility::Inherited,
             ),
             // The handle is how you get the panel back, so it never hides.
@@ -407,6 +503,7 @@ pub fn draw(
     pointer: Res<Pointer>,
     tools: Res<ToolState>,
     last: Res<super::record::LastRecording>,
+    tutor: Res<super::tutor::Tutor>,
     mut fills: Query<(&Slot, &mut Sprite)>,
     mut texts: Query<(&Slot, &mut Text2d, &mut TextColor)>,
 ) {
@@ -421,11 +518,34 @@ pub fn draw(
         };
     }
 
-    let hint = match hovered {
+    // Two lines, always. The old version showed the hovered button's hint *or*
+    // the last result, and cycling a list is exactly the case where you are
+    // still hovering the button that produced the answer you wanted to read —
+    // so `sigil >` looked like it was doing nothing at all.
+    let doing = match hovered {
+        // The preset buttons answer with *which* preset, not just what the
+        // button does. Hovering `preset` and being told "lay down a seal" is
+        // no help at all when the question is which seal you are about to lay
+        // down — and that is the moment you are hovering it.
+        Some(Slot::Button(index))
+            if Some(index) == tool_named("preset") || Some(index) == tool_named("preset >") =>
+        {
+            match crate::sim::PRESETS.get(tools.preset) {
+                Some((id, what, signs, open, aimed)) => format!(
+                    "{id}  ({}/{})  {what}  |  {signs} keystone(s) aimed {}, ring {}",
+                    tools.preset + 1,
+                    crate::sim::PRESETS.len(),
+                    if *aimed { "IN" } else { "out" },
+                    if *open {
+                        "OPEN - you close it"
+                    } else {
+                        "closed"
+                    },
+                ),
+                None => TOOLS[index].hint.to_string(),
+            }
+        }
         Some(Slot::Button(index)) => TOOLS[index].hint.to_string(),
-        // A recording outranks the idle hint until something is hovered, so the
-        // one thing the button produces is not lost the frame after it happens.
-        None if last.0.is_some() => last.0.clone().unwrap_or_default(),
         Some(Slot::Handle) => "show and hide the tools  (Tab)".to_string(),
         // Nothing hovered: say what a click on the paper would do right now.
         // It is the one piece of state no label can show.
@@ -439,6 +559,20 @@ pub fn draw(
                 tools.stamp_radius, tools.stamp_gap
             ),
         },
+    };
+
+    // The lesson outranks both. While the guide is on, the one line that
+    // matters is what to draw next — a hover hint about a button you are not
+    // pressing is noise on top of an instruction.
+    let hint = match (tutor.placed, last.0.as_deref()) {
+        (true, _) => {
+            let (lesson, signs) = crate::sim::PRESETS
+                .get(tools.lesson)
+                .map_or(("", 0), |(id, _, signs, _, _)| (*id, *signs));
+            format!("guide: {lesson}\n{}", tutor.step.asks(lesson, signs))
+        }
+        (false, Some(said)) => format!("{doing}\n{said}"),
+        (false, None) => doing,
     };
 
     for (slot, mut text, mut color) in &mut texts {

@@ -37,8 +37,10 @@ fn the_shipped_assets_load() {
     // into a sigil, plus four older fan names the page has since dropped.
     assert_eq!(c.signs().count(), 44);
     // 13 original compiler fixtures, 33 added so the panel can *name* a spell
-    // without a traced rune, and `flamespout` for the preset.
-    assert_eq!(c.spells().count(), 47);
+    // without a traced rune, `flamespout` for the preset, and five one-per-
+    // element seals so each of fire, water, wind, earth and light has a spell
+    // you can reach in one click.
+    assert_eq!(c.spells().count(), 52);
     assert_eq!(c.edge_cases().count(), 7);
 }
 

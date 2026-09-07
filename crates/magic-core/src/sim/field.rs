@@ -20,6 +20,15 @@ pub struct Cell {
     pub temperature: f32,
     /// Mass-weighted mean velocity.
     pub flow: Vec2,
+    /// Mass-weighted mean *position* — where the mass in this cell actually
+    /// sits, which is not the cell's centre.
+    ///
+    /// The piece pressure could not work without. A gradient sampled at cell
+    /// centres cancels for any symmetric blob: a lone overdense cell surrounded
+    /// by empty ones pushes equally in all four directions and therefore not at
+    /// all. Measuring where the mass really is gives each parcel a direction to
+    /// be pushed *away from*, which is what actually separates a pile.
+    pub centroid: Vec2,
 }
 
 /// A grid of cells, and the parcels moving through it.
@@ -286,6 +295,139 @@ impl Field {
         }
     }
 
+    /// Merges parcels of the same substance sharing a cell into one.
+    ///
+    /// **The fix for a world that grows without bound.** Every reaction emits
+    /// *new* product parcels, so a field where anything is reacting gains
+    /// parcels every tick and never loses any: a room left running reached
+    /// 36,000 parcels holding 400 units of mass — an average parcel weighing
+    /// a hundredth of a unit, which is not a lump of anything.
+    ///
+    /// It also killed the numbers. A weighted mean over tens of thousands of
+    /// near-zero masses is where `momentum NaN, NaN` came from, and a NaN in a
+    /// velocity spreads to everything it touches on the next tick.
+    ///
+    /// Exact, not approximate: mass adds, momentum adds, heat adds, and the
+    /// merged parcel's velocity and temperature are the mass-weighted means. A
+    /// parcel with an anchor or a shorter life is left alone — those are facts
+    /// about one parcel and merging would silently discard them.
+    pub fn coalesce(&mut self) {
+        let width = self.width;
+        // Not down to *one* per cell. Pressure separates parcels by pushing
+        // them away from where their cell's mass actually sits, and a single
+        // parcel is always exactly there — it has no direction to be pushed in,
+        // so merging all the way collapsed every pool into an immovable dot.
+        // A handful per cell is still a bounded count and still has a gradient.
+        const KEEP_PER_CELL: usize = 4;
+        // Rebuilt rather than filtered in place. The first version walked
+        // indices and kept a `merged` flag per parcel, which meant indexing two
+        // collections by the same counter — correct, and exactly the shape
+        // clippy asks you to justify. Moving the parcels out and pushing the
+        // survivors says the same thing without an index anywhere.
+        let taken = std::mem::take(&mut self.parcels);
+        let mut keep: Vec<Parcel> = Vec::with_capacity(taken.len());
+        // (cell index, substance, slot in `keep`) for whatever may still absorb.
+        let mut open: Vec<(usize, usize)> = Vec::new();
+
+        for parcel in taken {
+            // A parcel with an anchor or a countdown is not interchangeable
+            // with its neighbours: both are facts about that one parcel, and
+            // merging would silently discard them.
+            let mergeable = parcel.anchor.is_none() && parcel.life.is_infinite();
+            let cell = self.cell_at(parcel.at).map(|(col, row)| row * width + col);
+
+            let host = match (mergeable, cell) {
+                (true, Some(slot)) => {
+                    let peers: Vec<usize> = open
+                        .iter()
+                        .filter(|(at, into)| {
+                            *at == slot && keep[*into].substance == parcel.substance
+                        })
+                        .map(|(_, into)| *into)
+                        .collect();
+                    // Merge into the lightest, so a cell's parcels stay of
+                    // comparable size rather than one hoovering up the rest.
+                    if peers.len() < KEEP_PER_CELL {
+                        None
+                    } else {
+                        peers
+                            .into_iter()
+                            .min_by(|a, b| keep[*a].mass.total_cmp(&keep[*b].mass))
+                    }
+                }
+                _ => None,
+            };
+
+            match host {
+                Some(into) => {
+                    let host = &mut keep[into];
+                    let total = host.mass + parcel.mass;
+                    if total > 0.0 {
+                        host.velocity = (host.velocity * host.mass + parcel.velocity * parcel.mass)
+                            * (1.0 / total);
+                        host.temperature = (host.temperature * host.mass
+                            + parcel.temperature * parcel.mass)
+                            / total;
+                        host.at = (host.at * host.mass + parcel.at * parcel.mass) * (1.0 / total);
+                        host.mass = total;
+                    }
+                }
+                None => {
+                    if let (true, Some(slot)) = (mergeable, cell) {
+                        open.push((slot, keep.len()));
+                    }
+                    keep.push(parcel);
+                }
+            }
+        }
+
+        self.parcels = keep;
+    }
+
+    /// Replaces any parcel the maths has ruined.
+    ///
+    /// A `NaN` velocity is not a value, it is a bug that has already happened —
+    /// and unlike a panic it spreads silently, because every sum it enters
+    /// comes out `NaN` too. §4.7 says no panics, so the only honest thing left
+    /// is to notice and stop it. Returns how many it caught, so a readout can
+    /// say so rather than the field quietly healing itself.
+    pub fn scrub(&mut self) -> usize {
+        let mut caught = 0;
+        for parcel in &mut self.parcels {
+            if !parcel.at.is_finite() {
+                parcel.at = self.origin;
+                caught += 1;
+            }
+            if !parcel.velocity.is_finite() {
+                parcel.velocity = Vec2::ZERO;
+                caught += 1;
+            }
+            if !parcel.temperature.is_finite() || !parcel.mass.is_finite() {
+                parcel.temperature = super::parcel::AMBIENT;
+                parcel.mass = 0.0;
+                caught += 1;
+            }
+        }
+        if caught > 0 {
+            self.parcels.retain(Parcel::alive);
+        }
+        caught
+    }
+
+    /// Drops every parcel that has left the grid.
+    ///
+    /// The alternative to walls. Mass falls when something escapes, and that is
+    /// the point: it is visible in the readout instead of being quietly kept.
+    pub fn spill(&mut self) {
+        let (min, max) = self.bounds();
+        self.parcels.retain(|parcel| {
+            parcel.at.x >= min.x
+                && parcel.at.x <= max.x
+                && parcel.at.y >= min.y
+                && parcel.at.y <= max.y
+        });
+    }
+
     /// Recomputes every cell from the parcels.
     ///
     /// Mass-weighted, so a speck cannot outvote a boulder, and idempotent — it
@@ -297,6 +439,7 @@ impl Field {
     /// `balance`. Anything that sorts or filters this list changes the last
     /// decimal.
     pub fn settle(&mut self) {
+        let (width, cell_size, origin) = (self.width, self.cell_size, self.origin);
         for cell in &mut self.cells {
             *cell = Cell::default();
         }
@@ -313,15 +456,25 @@ impl Field {
             cell.density += parcel.mass;
             cell.temperature += parcel.heat();
             cell.flow += parcel.velocity * parcel.mass;
+            cell.centroid += parcel.at * parcel.mass;
         }
 
-        for cell in &mut self.cells {
+        for (slot, cell) in self.cells.iter_mut().enumerate() {
             if cell.density > 0.0 {
                 cell.temperature /= cell.density;
                 cell.flow = cell.flow * (1.0 / cell.density);
+                cell.centroid = cell.centroid * (1.0 / cell.density);
             } else {
                 cell.temperature = super::parcel::AMBIENT;
                 cell.flow = Vec2::ZERO;
+                // An empty cell's centroid is its own centre: nothing is there,
+                // so the only honest answer is the middle of the square.
+                let (col, row) = (slot % width, slot / width);
+                cell.centroid = origin
+                    + Vec2::new(
+                        (col as f32 + 0.5) * cell_size,
+                        (row as f32 + 0.5) * cell_size,
+                    );
             }
         }
     }

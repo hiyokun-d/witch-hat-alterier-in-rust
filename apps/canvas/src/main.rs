@@ -4,6 +4,10 @@ use bevy::sprite::Anchor;
 use magic_core::Point;
 
 mod debug;
+mod hand;
+mod particles;
+mod props;
+mod reading;
 mod shortcuts;
 mod sim;
 mod ui;
@@ -38,11 +42,11 @@ const INK_WIDTH: f32 = 5.0;
 
 /// Aged parchment. Witches in the source draw dark on warm paper, never on
 /// white — the cream is what keeps ink from reading as harsh.
-const PAPER: Color = Color::srgb_u8(0xE8, 0xDC, 0xC4);
+pub(crate) const PAPER: Color = Color::srgb_u8(0xE8, 0xDC, 0xC4);
 
 /// The surface the sheet lies on. Dark enough that the parchment reads as lit,
 /// warm enough that it does not look like a UI panel.
-const DESK: Color = Color::srgb_u8(0x3A, 0x2E, 0x22);
+pub(crate) const DESK: Color = Color::srgb_u8(0x3A, 0x2E, 0x22);
 
 /// Iron-gall black: as dark as the paper allows, biased brown rather than blue.
 const INK: Color = Color::srgb_u8(0x22, 0x1C, 0x18);
@@ -168,6 +172,8 @@ fn main() {
             }),
             ..default()
         }))
+        // The typeface, before anything spawns text.
+        .add_plugins(hand::HandPlugin)
         // Scaffolding. Delete this line and `mod debug;` and nothing breaks.
         .add_plugins(debug::DebugOverlayPlugin)
         // Ways to build a seal without drawing one. Same deal — delete this
@@ -175,7 +181,14 @@ fn main() {
         .add_plugins(ui::ToolbarPlugin)
         // What a compiled spell actually does. Delete this line and `mod sim;`
         // and the pad, the recognizer and the compiler are untouched.
+        // Reads the pad once a frame so nothing else has to. Must come before
+        // the simulation and the overlay, which both consume the answer.
+        .add_plugins(reading::ReadingPlugin)
         .add_plugins(sim::SimPlugin)
+        // World content, not measurement: props are the thing a spell is aimed
+        // at and motes are what a moment looks like, so neither hides with F1.
+        .add_plugins(props::PropsPlugin)
+        .add_plugins(particles::MotesPlugin)
         .insert_resource(ClearColor(DESK))
         .init_resource::<InkPad>()
         .init_resource::<PaperShape>()

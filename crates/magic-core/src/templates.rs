@@ -113,17 +113,18 @@ pub fn parse(file: &'static str, source: &str, n: usize) -> Result<Vec<Recorded>
 
     let mut out = Vec::with_capacity(parsed.templates.len());
     for gesture in &parsed.templates {
-        // Same name twice within a kind means one of them can never win a
-        // match, and which one is silently decided by file order.
-        if out
-            .iter()
-            .any(|found: &Recorded| found.kind == gesture.kind && found.template.name == gesture.id)
-        {
-            return Err(CatalogError::DuplicateId {
-                file,
-                id: gesture.id.clone(),
-            });
-        }
+        // Several samples of one rune is **wanted**, not an error.
+        //
+        // This used to be rejected, on the reasoning that "one of them can
+        // never win a match, and which one is silently decided by file order".
+        // That is wrong for a nearest-neighbour recognizer: both compete, the
+        // nearer wins, and since they carry the same name the *answer* is the
+        // same either way. What varies is which sample of your handwriting the
+        // drawing happens to be closest to — which is the entire reason to
+        // record more than one.
+        //
+        // Three to five samples of a hand-drawn shape is the usual figure, and
+        // it is the cheapest accuracy there is.
 
         let Some(template) = Template::record(gesture.id.clone(), &gesture.points(), n) else {
             return Err(CatalogError::Parse {
@@ -173,6 +174,57 @@ pub fn check(recorded: &[Recorded], catalog: &Catalog) -> Result<(), CatalogErro
 /// [`recognizer::classify`].
 pub fn templates(recorded: &[Recorded]) -> Vec<Template> {
     recorded.iter().map(|r| r.template.clone()).collect()
+}
+
+/// The built-in shapes, as templates the recognizer can match against.
+///
+/// `templates.ron` still ships empty and still means what it meant: nobody has
+/// traced the manga's own line art. These are the reconstructions in
+/// [`crate::shapes`], and they exist because an empty catalogue makes the whole
+/// recognizer unreachable — every seal compiles to rule 9's discharge and the
+/// compiler may as well not be there.
+///
+/// **A traced rune of the same name must win.** [`with_built_ins`] appends
+/// these *after* whatever was loaded, and `classify` keeps the earlier of two
+/// equal distances, so a recorded `fire` outranks the built-in `fire` the day
+/// somebody records one.
+pub fn built_ins(n: usize) -> Vec<Recorded> {
+    crate::shapes::built_in()
+        .into_iter()
+        .filter_map(|(id, kind, strokes)| {
+            let points: Vec<Point> = strokes
+                .iter()
+                .enumerate()
+                .flat_map(|(stroke_id, stroke)| {
+                    stroke.iter().map(move |&(x, y)| Point {
+                        x,
+                        y,
+                        stroke_id: stroke_id as u32,
+                    })
+                })
+                .collect();
+            Some(Recorded {
+                kind,
+                template: Template::record(id, &points, n)?,
+            })
+        })
+        .collect()
+}
+
+/// Whatever was recorded, then the built-ins as a fallback.
+pub fn with_built_ins(recorded: Vec<Recorded>, n: usize) -> Vec<Recorded> {
+    let mut all = recorded;
+    for shape in built_ins(n) {
+        // A recorded rune of the same name and kind is the better answer, so
+        // the built-in stands aside rather than competing with it.
+        let taken = all
+            .iter()
+            .any(|have| have.kind == shape.kind && have.template.name == shape.template.name);
+        if !taken {
+            all.push(shape);
+        }
+    }
+    all
 }
 
 /// Which recorded gesture a drawing is nearest, by name.

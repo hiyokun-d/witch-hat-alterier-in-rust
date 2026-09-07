@@ -75,18 +75,23 @@ fn the_same_name_in_both_vocabularies_is_allowed() {
     assert_eq!(parse("t.ron", source, MATCH_POINTS).unwrap().len(), 2);
 }
 
-/// Twice in one vocabulary is not, because which one wins would be decided by
-/// file order and nothing else.
+/// Twice in one vocabulary is a **second sample**, and that is the point.
+///
+/// This used to be rejected, on the reasoning that "which one wins would be
+/// decided by file order and nothing else". That is wrong for a
+/// nearest-neighbour recognizer: both compete, the *nearer* wins, and since
+/// they carry the same name the answer is identical either way. What varies is
+/// which sample of a person's handwriting the drawing lands closest to — which
+/// is the entire reason to record a rune more than once.
 #[test]
-fn the_same_name_twice_in_one_vocabulary_is_rejected() {
+fn the_same_name_twice_in_one_vocabulary_is_a_second_sample() {
     let source = r#"(version: 1, templates: [
         (id: "fire", kind: Sigil, strokes: [[(0.0, 0.0), (9.0, 1.0), (4.0, 8.0)]]),
         (id: "fire", kind: Sigil, strokes: [[(0.0, 0.0), (1.0, 9.0), (8.0, 4.0)]]),
     ])"#;
-    assert!(matches!(
-        parse("t.ron", source, MATCH_POINTS),
-        Err(crate::catalog::CatalogError::DuplicateId { .. })
-    ));
+    let loaded = parse("t.ron", source, MATCH_POINTS).expect("two samples must load");
+    assert_eq!(loaded.len(), 2);
+    assert!(loaded.iter().all(|r| r.template.name == "fire"));
 }
 
 /// A rune that cannot be normalised would never match anything and never say

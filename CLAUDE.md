@@ -707,11 +707,15 @@ cargo fmt --check
 atelier/
 ├── Cargo.toml            workspace root, no src/
 ├── CLAUDE.md             this file
+├── web.sh                builds the wasm bundle and serves it
+├── web/index.html        the page: a desk, a canvas, and nothing else
 ├── crates/
 │   └── magic-core/
 │       ├── src/
 │       │   ├── lib.rs        Point, re-exports
 │       │   ├── recognizer.rs $P point-cloud recognizer
+│       │   ├── shapes.rs    what each mark LOOKS like — see §12
+│       │   ├── naming.rs    ink -> sigil + signs. The join that was missing
 │       │   ├── circle.rs     ring fitting + closure detection
 │       │   ├── glyph.rs      Sign, Ring, Glyph — identity, no behaviour
 │       │   ├── catalog.rs    .ron loader; the only thing knowing behaviour
@@ -740,12 +744,15 @@ atelier/
             ├── main.rs      app, InkPad, capture, paper, ink
             ├── shortcuts.rs undo / redo / clear on &mut InkPad
             ├── sim.rs       the world in the app: FixedUpdate 60Hz, cast_pad
+            ├── hand.rs      the typeface, baked in — see §11
+            ├── reading.rs   the pad, read ONCE a frame, shared by everyone
             ├── debug.rs     on-screen overlay — Claude's, see §0
             ├── ui/          tool panel: place, guides, toggles — see §4.8
             │   ├── mod.rs   plugin, ToolState, the TOOLS table
             │   ├── bar.rs   panel geometry, drawing, hit-testing
             │   ├── place.rs pick-then-place: drag, preview, commit
             │   ├── guides.rs helper rings and spokes
+            │   ├── tutor.rs  the guide: draw a seal one stroke at a time
             │   └── stamp.rs generating exact ink
             └── tests/       one file per module above
 ```
@@ -791,7 +798,7 @@ M4  Recognizer        ██████████ 9/9   ✅
 M5  Compiler ring     ██████████ 8/8   ✅
 M6  Elements/physics  ██████████ 8/8   ✅
 M7  Reactions         ██████████ 8/8   ✅
-M8  Web build         ░░░░░░░░░░ 0/7   ← current
+M8  Web build         ████░░░░░░ 3/7   ← current
 M8  Web build         ░░░░░░░░░░ 0/7
 M9  Camera & vision   ░░░░░░░░░░ 0/7
 M10 AR & polish       ░░░░░░░░░░ 0/7
@@ -801,13 +808,145 @@ M4 came in at nine tasks, not the eight first planned: M4.2b — assembling
 strokes into rings — was scoped as part of M4.2 and turned out to be its own
 piece of work.
 
-**Current task:** M8.1 — the wasm build. `magic-core` has been kept
-platform-free since M0 precisely so this is a build-configuration job rather
-than a rewrite; the shell is where the work is.
+**Current task:** M8.4 — touch input. M8.1 to M8.3 are done: core and the shell
+both compile to wasm, and `./web.sh` builds and serves a page. What is untested
+is a finger rather than a mouse, and a pad you cannot draw on with a finger is
+not a web build worth having.
 
 **The one thing still blocking the recognizer is not code.** `templates.ron`
 ships empty and the shapes have to be traced. `record` writes them now, so the
 step is a person tracing panels, not a missing feature.
+
+**The seal was drawn right and the compiler was told nothing.**
+
+Reported from a screenshot: an earth sigil inside a closed ring, reporting
+`DISCHARGE - a blast` with `3 mark(s) inside that nothing can name` — while the
+recogniser board, on the same frame and the same ink, read `earth 0.081, margin
+0.086, a clear call`. **Two answers from one drawing**, which is always the
+signature of a metric that does not match its own rule.
+
+The board scores the ring's whole contents as one cloud. `naming` first split
+them into marks, and split them by the distance between **stroke centres** — but
+an earth sigil is a bar over a chevron, and those two strokes *touch* while their
+centres sit most of the mark apart. One sigil became three pieces, none of which
+resembled anything.
+
+Measuring the gap between the strokes' **ink** instead is the obvious fix and it
+is also wrong, and the traced runes are what proved it. The widest gap inside one
+real rune is **35px** — water is three teardrops drawn well apart. The gap
+between a sigil and the keystone beside it, in a seal that has to segment
+correctly, is **32px**. There is no threshold between 35 and 32. Any single
+number either shreds water or swallows the keystone.
+
+So segmentation stopped being a question about geometry alone. **Geometry
+proposes and the recognizer disposes**: merge strokes agglomeratively by ink gap
+to get a binary tree — every spatially sensible grouping and no others, `2n-1`
+nodes rather than `2^n` subsets — score every node by asking `$P` what it is, and
+take the best cut by dynamic programming. A blob loses to its parts when the
+parts read as something and wins when they do not. Water's teardrops merge
+because separately they are nothing; the sigil and the keystone stay apart
+because together they are nothing. Same rule, opposite answers, which a threshold
+could never do.
+
+Two constants carry it and both are ours. `UNREAD_COST` is the exchange rate
+between reading fewer things well and more things badly. `SPLIT_COST` is a
+parsimony prior, and it was not in the first version: the built-in light sigil is
+a diamond inside a square, and **the square alone matches `light`** nearly as
+well as the whole thing, so two marks each called light outscored one and the
+seal reported a sigil it could not place. A part of a rune resembling the rune is
+a discovery about the shape, not a second rune.
+
+All eight traced samples now segment to exactly one mark and read as themselves.
+`a_sigil_and_a_keystone_beside_it_stay_two_marks` pins the other direction,
+because a fix that merged everything would pass the first test and be worthless.
+
+**`trace >` could not reach a single sign, and never could.** `record` has always
+indexed `traceable` — sigils and then signs — while the button stepped modulo the
+*sigil* count. Thirty-four of forty-four keystones were unreachable from the
+panel. Found by sweeping the two against each other rather than from a
+screenshot, which is the only way a bug like that surfaces: nothing misbehaves,
+a list just quietly ends early.
+
+**Props: something for a spell to act *on*.**
+
+`fill_air` fixed half of "it fires and nothing happens" — a discharge needs
+something to shove. This is the other half. `sim/prop.rs` is a rectangle of some
+substance sitting on the paper that catches, soaks, is blown about and is lit,
+and `kindle` scatters a handful.
+
+- **Entirely ours** (§2.6). Canon has no objects and never says what a spell does
+  to a plank.
+- **A prop is not a parcel, on purpose.** A hundred `wood` parcels would be less
+  code and would drift apart within a second, because parcels are a *fluid*. The
+  point of a prop is that it holds together until something destroys it.
+- **Burning conserves.** A plank of mass six leaves exactly six units of flame
+  and smoke behind it, drawn from its own integrity — §3.2 would be a lie
+  otherwise the moment objects existed. `Sim::prop_mass` exists because
+  `Field::mass` alone would show a world that invents matter.
+- **`ignites_at` is data, and its *absence* is load-bearing.** Stone has no entry
+  rather than a high number, which is what makes a stone plinth safe to stand a
+  fire on. `cloth` was added at 180 degrees as the clearest demonstration of
+  wetness, which refuses ignition rather than merely cooling it.
+- **Scattering is a hashed pure function of the index** (§4.3), so "random on the
+  paper" is reproducible and a scattered board is something a test can be written
+  against at all.
+
+*Reaches it from the panel (§4.8):* **`kindle`** scatters, **`kindle >`** chooses
+wood, cloth, stone, ice or sand and says what each refuses to do, **`sweep`**
+clears them. The world block grew a `props` line — count, mass, how many alight,
+soaked and lit.
+
+**Moments needed their own representation.**
+
+A blast is over in one tick. By the frame after, the only trace is that some
+parcels are moving outward, which is not something a person can see — so a
+renderer that only draws *state* can never show what happened. `sim/event.rs`
+says what occurred and `apps/canvas/src/particles.rs` decides what that looks
+like, which is §4.2 drawn through a new place.
+
+- **The look table is complete, not merely used.** Every substance in
+  `materials.ron` and every `Event` variant has an entry, including ones nothing
+  emits yet, because a hole in it fails *silently*: the effect does not appear
+  and nobody can tell a missing rule from a missing colour.
+- **Gathering falls inward, creating blooms outward.** The capability model
+  (§3.2) made visible — you can see whether a spell made its substance or took it
+  from the room without reading a number. `Refused` is grey and falls, because
+  §3.2 biting has to look like a failure rather than like nothing.
+- **The queue is drained, not read.** `Sim::step` deliberately does not clear it:
+  a fixed step can run twice between two frames, so a tick's events would be gone
+  before anything saw them. A cap stops a shell that never drains from growing.
+- **Nothing here is read back.** No mote touches a parcel, a prop, a field or a
+  spell, which is why a file that runs on the frame clock and hashes a counter
+  does not violate §4.3. That is the test for anything added to it.
+- **Reactions got a position.** `ReactionReport::fired` was `(String, f32)` and
+  could only ever be printed in a corner; it is a `Fired` with an `at` now, so
+  water hitting fire is visible where it happened.
+
+**Light had to be both halves.** The desk dimming was already there and on its
+own it is a room going dark for no reason. `draw_glow` is the light itself: a
+radial falloff texture generated at startup — six lines of arithmetic, and §11
+keeps the repository's only binary the typeface — drawn under the ink for
+everything whose material `glow`s, and for every burning prop. The paper dims too
+now, which reverses an earlier call: leaving it alone did keep the ink readable
+and it also made the *unlit page* the brightest thing on screen during a light
+spell, which is backwards. It goes a third of the way and no further.
+
+**The tracing board is its own panel now.**
+
+`trace` on the `view` section, beside `spell` and `world` rather than behind F1,
+because tracing runes is a *sitting* and reading six blocks of measurement to
+find one number is not a thing to ask of somebody mid-stroke. It shows what
+`record` will save — the same non-ring selection the recorder itself uses, or the
+percentage would describe a different drawing from the one that gets written —
+how many samples of each rune are on file, the three nearest matches, and the
+verdict against the rune you *said* you were tracing, which is the thing worth
+knowing on the occasions it is not the one that won.
+
+**Closeness is a percentage with its threshold named.** `100%` is exact and `0%`
+is `naming::NEAR_ENOUGH`, the distance at which the compiler stops believing it.
+It is not a probability and does not pretend to be one — it is where this drawing
+sits between perfect and rejected, which is the question a person tracing is
+actually asking. The recogniser board's ranking carries the same column.
 
 **Where the recogniser board landed** — `$P` gets the overlay the circle fitter
 already had:
@@ -897,6 +1036,374 @@ is what puts anything in it.
   itself. Sanitising in the shell rather than in core is the same call §4.4 makes
   about pixels: which glyphs a font has is a fact about this shell, and core is
   entitled to write a proper dash in a `Display` impl.
+
+**Light had to change the room, not just draw bright dots.**
+
+The paper is already pale, so *more pale* reads as nothing — a light spell that
+only brightens some parcels is a light spell you cannot see. So the **desk**
+darkens as one takes hold and comes back as it spends: not the paper, because
+dimming that would hide the ink, and darkening what is *around* the drawing is
+what makes light read as light without taking the drawing away. Dimming is
+quicker than recovery on purpose — a flare should feel sudden and its absence
+should feel like your eyes adjusting. **Ours** (§2.6): canon says light
+"manifests magic as light" and stops there.
+
+**Sigils are placed like everything else, and the guide is placed at all.**
+
+The element buttons used to stamp at the middle of the pad at a fixed size — a
+different interaction from every other tool on the panel, for no reason anyone
+could give. `Shape::Mark("fire")` goes through the same pick-then-place path as
+a ring or an arc, and a drag sizes it.
+
+The guide is now a click: `Shape::Guide` puts the lesson where you point, and
+there is only ever **one** — clicking again moves it rather than adding a
+second, because two half-finished lessons on one page would be two sets of ghost
+strokes with no way to tell which step belonged to which. It also watches the
+ring near *the lesson* rather than near the origin.
+
+Removing `Toggle::Guide` and `Command::Element` afterwards was the point of
+listening to the dead-code warning rather than silencing it: both had become
+unreachable, and a leftover flag beside `tutor.placed` is two ways to say one
+thing, waiting to disagree.
+
+**The water orb, and why it is the clearest demonstration in the app.**
+
+Four arrows pointing at the middle, water sigil in the centre. Canon's
+`AllInward` — "manifests only inside the ring" — and it is the *arrangement*
+doing every bit of the work: the same water sigil with the arrows reversed is a
+fountain. Sigil says what, signs say how, ring says when. `stamp::seal` takes
+`inward` and the preset table carries it, so the panel can lay either one down
+and the difference is visible on the paper before it fires.
+
+**M8.2 and M8.3: the shell reaches the browser.**
+
+`webgl2` is added for the wasm target only — **not** WebGPU, which is still
+behind a flag in most browsers, and a page that needs a flag is not a page you
+can send to a friend. `web/index.html` is deliberately bare, because the app
+draws every readout itself: a desk, a canvas, and a loading note that replaces
+itself with the actual error if the module fails to start. A blank brown page
+with no explanation is the worst way to discover a stale build.
+
+`touch-action: none` and `user-scalable=no` are not decoration. Without them a
+drag becomes a scroll and a two-finger rest becomes a zoom, and the pad cannot
+be drawn on at all.
+
+`./web.sh` says the thing everyone forgets: `cargo build --target wasm32` makes
+a `.wasm` a browser **cannot load on its own**, and `wasm-bindgen` writes the
+glue that can. It refuses loudly when `wasm-bindgen-cli` is missing rather than
+producing a page that silently does nothing.
+
+**The filesystem, answered rather than hidden.** `std::fs` *compiles* for
+`wasm32-unknown-unknown` and fails at runtime — it builds, it looks supported,
+and it quietly does nothing, which is the worst of the three options. So
+`record` and the rune-file watcher are `cfg`-gated and the web build says
+outright: **"recording needs the desktop build - the browser has no files"**.
+The built-in shapes are compiled in, so the web build still *recognises*
+everything the desktop one does; it just cannot pick up a rune traced since it
+started. Tracing is a desktop job anyway — the reference is open beside the app.
+
+**M8.1: core really does compile to wasm, and nothing had ever checked.**
+
+§4.1 has claimed since M0 that `magic-core` compiles to
+`wasm32-unknown-unknown` untouched — no Bevy, no wgpu, no `std::fs`, no threads,
+no clock. It was never once tested, and it held on the first attempt. Every
+refusal along the way is what paid for it: `Catalog::parse`, `templates::parse`,
+`ReactionBook::parse` and `Materials::parse` all take **strings** rather than
+paths; `Sim::elapsed` is derived from a tick count and not a wall clock; `swirl`
+is a hashed pure function rather than an RNG; `Vec2` was written by hand; every
+simulation path uses a sorted `Vec` or a `BTreeMap`. The two dependencies that
+did come along, `ron` and `serde`, are pure Rust — which is exactly why §4.4 was
+allowed to spend that budget.
+
+**A sigil drawn on its own was firing, with no ring anywhere near it.**
+
+Reported from a screenshot: a lone fire sigil showing `DISCHARGE - a blast,
+summoning 0.2s left`. Its triangle is a **closed loop that fits a circle** well
+enough to be found, and so are earth's chevron, light's square-and-diamond and
+convergence's triangle.
+
+`RingCandidate::activation` has asked "is this a ring at all" since M4.4 — and
+`Ring` **threw the answer away**, so `compile` only ever asked *closed?* and
+*neat?*. `Ring` carries `simple` now and `fire()` asks it **first**, because
+"closed" and "neat" are meaningless questions about a triangle. Three regression
+tests pin it, and the third is the one that matters: `a_real_ring_still_fires`,
+because a fix that made everything inert would pass the other two and be
+worthless.
+
+This is the concept the whole engine rests on, stated back plainly: **sigil,
+signs, ring — and no ring means no spell.** Ink without one is inert, which §3.3
+already said and nothing enforced.
+
+**Loose ink is named now, and still inert.** Canon rule 1 makes marks outside
+every ring contribute nothing, and §3.3 makes them inert *rather than invalid* —
+but inert should not mean invisible. Each one gets a faint caption: `fire (no
+ring)`, or `unread`. Same clustering and same threshold as inside a ring,
+deliberately, because a mark must not change its mind about what it is the
+moment a ring is drawn round it.
+
+**Tracing ends in the app rather than in a text editor.** `trace >` picks which
+rune the next recording *is*, and `record` writes it under that name — the
+`RENAME_ME_n` placeholder is now only the fallback. Re-tracing replaces the
+earlier attempt, because re-tracing is how a shape gets better and keeping both
+would leave the worse one competing. This is the workflow §2 always described: a
+person traces, the app records, and the built-in reconstructions stand aside.
+
+**An eraser.** `clear` and `wipe` are all-or-nothing and a seal is a dozen
+strokes; one bad keystone should not cost the ring. Nearest stroke only, because
+erasing more than you pointed at is what makes an eraser frightening.
+
+**The compiler was unreachable from a drawing, and had been all along.**
+
+`assembly` found rings and what they held. The recognizer could tell one shape
+from another. The compiler knew what every sigil and sign does. **Nothing joined
+them**, so every seal drawn by hand compiled to canon rule 9's discharge — and
+`templates.ron` shipping empty meant there was nothing to recognise anyway.
+Milestones M4 and M5 were each finished and the pair of them did nothing
+together.
+
+`shapes.rs` gives the five elements and three signs a geometry, and `naming.rs`
+is the join. Three decisions in it are worth stating:
+
+- **Which strokes are one mark.** Fire is four strokes and a column is two, so
+  "one stroke, one mark" is wrong for almost everything. Single-link clustering
+  on stroke centres, at a distance scaled by the ring — the parts of one mark
+  are drawn touching, and two marks in a seal are drawn far enough apart to be
+  legible as separate things.
+- **Which mark is the sigil.** By the *template's kind*, never by position.
+  §2.2 says outright that a sigil's location does not change its behaviour, so
+  picking "the middle one" would invent a rule canon denies.
+- **Where a sign sits.** `placement` from the ring's centre and `orientation`
+  from the mark's own long axis, because §2.4 makes the tilt between those two
+  the difference between reach and spin.
+
+**A match has to win, and win clearly.** The first threshold was distance alone
+and `ink_nobody_recognises_is_counted_rather_than_guessed` caught it: `$P` always
+returns a *nearest* template, so "nearest, and near enough" cheerfully called a
+scribble a fire sigil. Real ink is decisively nearer one shape; noise is roughly
+as far from everything. So `NEAR_ENOUGH` is joined by `CLEAR_MARGIN`, and the
+runner-up is what decides whether the winner won — the same question the
+recogniser board has been printing since M4.7, promoted from a readout into the
+decision.
+
+**Duration is on screen.** `summoning - 3.4s left` under the seal, and every
+running spell in the world block. The question a person has while watching one is
+"is this about to stop", and the only answer used to be to keep watching.
+
+**The guide followed the pointer, which made it useless** — the thing you are
+trying to trace moved as you reached for it. A guide has to hold still or it is
+not a guide.
+
+**The element buttons stamp the sigil and then clear the override.** Forcing a
+name would hide whether the recognizer actually read the drawing, and that is
+now the interesting question rather than a formality.
+
+**A stamped seal is useful for testing and useless for learning.**
+
+`preset` puts a finished drawing on the paper without ever putting it in your
+hand. `ui/tutor.rs` is the other half: the same seal, one stroke at a time, with
+the next stroke shown faintly where it goes and the pad watched to see when you
+have drawn it.
+
+It teaches **whatever `preset >` has selected**, deliberately rather than
+carrying its own list of lessons. A second list is a second thing to keep in
+step, and the property worth having is that the button which stamps a seal and
+the guide which teaches it cannot disagree — both read `PRESETS`, both draw with
+`stamp::seal`.
+
+There is **no "next" button**, because there is nothing to press: you have either
+drawn the thing or you have not, and `Reading` already knows. The step you are on
+is drawn bright, what you have finished stays faint — a guide that shows
+everything at full strength is a picture rather than a lesson. The first step
+centres on the pointer so a lesson starts where you are looking, and the ring it
+watches is the one nearest the size being taught rather than simply the first, so
+a stray loop elsewhere on the paper cannot hijack it.
+
+**The last line is the one that matters:** *"done — and canon never asked for
+that order. Any order draws the same seal."* §2.5 is explicit that canon never
+constrains drawing order — an unclosed ring is a fully prepared spell, and half a
+split seal is drawn with no complete ring at all — so ring, centre, keystones,
+close is a *teaching* order and nothing more. Saying so is the difference between
+a guide and a rule somebody invented.
+
+**Drawing felt broken because the pad was being read eight times a frame.**
+
+`find_rings` fits a circle to every stroke by Taubin, measures winding and
+coverage on the survivors, then asks each ring what it contains; `compile_all`
+follows. Doing that once is cheap. Doing it in the inspector, the fit line, the
+ring captions, the recogniser board, the fit drawing, the auto-cast watcher and
+`cast_pad` — each for itself, every frame — is not. At four hundred points that
+is the whole difference between drawing feeling immediate and feeling broken.
+
+`reading.rs` reads it once and everyone reads the answer, and it only recomputes
+when the ink or the naming actually changed — remembering what the pad looked
+like rather than trusting a `Changed` filter, which fires on any write. The
+pixel thresholds moved there too, which is where §4.4's units rule always said
+they belonged.
+
+**The preset would not fire twice, and the cause was the watcher's memory.**
+
+`preset` clears and re-places in the *same* frame, so the watcher never saw an
+empty pad — and the new ring landed at the same centre and radius as the old
+one, which is exactly how it decides two rings are the same ring. It matched a
+seal already marked *fired*, the rising edge never happened, and nothing cast
+until the pad was wiped by hand first. `undo`, `redo`, `clear`, `wipe`, `preset`
+and the element buttons all clear that memory now.
+
+**`sigil >` was working; you could not see it.** The hint line showed *either*
+the hovered button's description *or* the last result, and cycling a list is
+precisely when you are still hovering the button that produced the answer you
+wanted to read. Two lines now, always: what the button does, and what just
+happened.
+
+**A spell that fires once is a firework, not a fountain.**
+
+`Sim::channels` — a cast registers a *running* spell that keeps summoning tick by
+tick. Canon points straight at it: long-duration water spells **collect** rather
+than create, which is a claim about a spell that runs for a while, and nothing in
+the model was long about anything. Duration is rule 8 twice over — `Fleeting`
+gets a fifth of the time, and among seals that hold, a neater ring runs longer.
+
+Two details carry it. The **rate** is what the seal decides and `dt` only decides
+how finely it is chopped, so halving the timestep gives twice as many casts of
+half the size — the same water, which §4.3 requires of anything on a clock. And
+there is **one channel per seal, not per press**: casting the same seal again
+refreshes it rather than stacking, which is what stops a held button becoming an
+ocean.
+
+**Walls became a rule rather than a fact.** `SimRules.walls` on, nothing escapes
+and mass is conserved exactly — which is what makes every M6.8 property testable.
+Off, `Field::spill` drops what leaves and the mass total visibly *falls* instead
+of the field quietly keeping it. Both honest; only one measurable, so walls are
+the default and `walls` on the panel turns them off.
+
+**Prepared presets.** Every preset has an open twin — ring left with a gap,
+everything else drawn. Canon rule 2 as a tool: "leaving a gap prepares a spell to
+be fired later by closing it". They land inert and the last stroke is yours,
+which is the moment the whole engine is built around and the one thing a finished
+preset can never show you.
+
+**Five seals, one per element**, and an `element` section that names a seal
+outright — hunting for `water` in a list of thirty-four is not a thing to make
+somebody do. `water_orb` is water plus four levitation signs, taken from the
+community spell simulator's own sample and agreeing with what the wiki says
+levitation does: floats the target, often shaping it into a sphere **when
+balanced**. Recorded as `Inferred`, because the arrangement is reconstructed
+rather than quoted.
+
+One correction rode along with it: canon's primary tetrad is fire, water, earth
+and air, and **light is a fire *variant*, not a fifth element**. The wiki is clear
+and the popular summaries are not. It is on the panel because it is the fifth
+thing anyone wants to try.
+
+**A preset seal with nothing in the middle was a real bug, not a shortcut.**
+
+Every seal in the source has a sigil at its centre, and `preset` was laying down
+a ring with arrows around an empty hole — a drawing nobody would recognise as a
+seal, wrong before the compiler had said a word. `stamp::seal` puts a mark there.
+
+Deliberately **not** a small ring: the ring search would find it and read it as
+canon rule 4's nesting, which would change what the seal compiles to. A
+three-sided mark inside a cross cannot be mistaken for one. It is a stand-in and
+not a traced rune — §2 still holds, the shapes belong to the manga — but the
+centre has to be occupied.
+
+The seal is one function so the button and the **hover preview** draw the same
+thing. Hovering `preset` now paints the whole seal on the paper in ghost purple,
+which matters because that button's entire job is "put a complicated drawing
+here" and the hint line can only say its name. Calling the same function is what
+stops a preview from lying.
+
+**The room full of air turned the world overlay into a grid of boxes.**
+
+`fill_air` gave every one of 576 cells some mass, and the overlay shades any cell
+with mass in it, so all of them lit up and the drawing was lost inside. It shades
+only cells above *a breath of air* now, and shades by how packed they are, so a
+pool reads as a pool rather than as a uniform stencil.
+
+Two smaller ones from the same screenshot: `repetition - MOVES ` with nothing
+after it, because guidance, obliviation, doorways and repetition act on no
+substance at all and the sentence stopped halfway; and `preset` still advising
+"press cast" with `auto` on, which is advice from two versions ago. And `pour`
+drops under the pointer now rather than at the world origin, because two
+substances could otherwise only ever be made to meet in one place.
+
+**Water had no surface, and the reason was a cancelling gradient.**
+
+Buoyancy and cohesion between them give water something that falls and holds
+together, and neither says a liquid is nearly **incompressible**. Without that
+term water collapses into whichever cell is lowest and sits there as a dot — no
+level, no heap, no pool. `MaterialDef::stiffness` is the term.
+
+The first attempt moved a pile **0.55 pixels in ninety ticks**, and the failure
+was a modelling error rather than a tuning miss: **a pressure gradient sampled at
+cell centres cancels for any symmetric blob.** A lone overdense cell surrounded
+by empty ones pushes equally in all four directions, so the sum is exactly zero.
+
+`Cell` gained a **`centroid`** — the mass-weighted mean *position*, which is not
+the cell's geometric centre — and pressure now pushes each parcel away from where
+its cell's mass actually is. That term vanishes in an even pool, because there a
+parcel already *is* where the mass is, and bites hardest in a heap. The gradient
+term stays alongside it, because that is what levels a pool once it has one.
+
+`coalesce` had to give ground for it: merging every same-substance parcel in a
+cell down to *one* left pressure with nothing to push apart, since a single
+parcel is always exactly at its own centroid. It keeps **four per cell** now —
+still a bounded count, still no runaway, but a gradient survives. And pressure
+only engages *above* the rest density, so a thin scatter of droplets does not
+fly apart.
+
+**`momentum NaN, NaN`, and 36,756 parcels holding 400 units of mass.**
+
+Both the same bug. Every reaction emits *new* product parcels and merges
+nothing, so a world where anything is reacting gains parcels every tick and
+loses none. After nine thousand ticks the average parcel weighed a hundredth of
+a unit, which is not a lump of anything — and a weighted mean over tens of
+thousands of near-zero masses is where the `NaN` came from. Then it spread,
+because every sum a `NaN` enters comes out `NaN`.
+
+`Field::coalesce` merges parcels of one substance sharing one cell. **Exact, not
+approximate**: mass adds, momentum adds, heat adds, and velocity, position and
+temperature become the mass-weighted means — `merging_conserves_momentum_and_heat`
+pins all three. A parcel carrying an anchor or a countdown is left alone, because
+both are facts about *that* parcel and merging would discard them silently.
+
+`Field::scrub` catches a ruined parcel instead of letting it spread, and `Sim`
+counts what it caught. §4.7 forbids panics, and a `NaN` is the *silent* version
+of a panic — the only honest thing left is to notice it and say so on screen
+rather than have the field quietly heal itself.
+
+Written the second time without an index loop: the first version walked indices
+and kept a `merged` flag per parcel, indexing two collections by one counter.
+Moving the parcels out and pushing survivors says the same thing with no index
+anywhere.
+
+**The overlay was hiding the two things a person actually needs.**
+
+`debug_overlay` is off by default now, and that is only safe because the ring
+caption and the world stopped being *debug*. "What will this seal do" and "what
+is in the world" are the questions you have **while drawing**; putting them
+behind F1 meant turning the measurements off left the app unusable rather than
+clean. They ride `spell` and `world` now and still vanish with `debug.rs`, which
+is what §0 asks.
+
+With the measurements off the caption is the answer and nothing else —
+`aeriforms - MAKES air` over `ACTIVE - circuit closed`. Turn them on and it grows
+its stroke ids, radius and rms back.
+
+**The hint line was being missed, and it was saying the wrong thing.**
+
+It hung below the slab, which was fine at one column and hopeless at two — the
+panel now reaches most of the way down the window, so the hint was landing in the
+last few pixels of screen. It runs along the bottom edge now, at 16px, bright, on
+a dark plate, because pale text on parchment is not text.
+
+And it answers the actual question. `sigil >` used to say `sigil 7/34: aeriforms`
+— which button you pressed, and nothing about the magic. `describe_sigil` reads
+the catalogue instead: `aeriforms - MAKES air (cannot move it)`,
+`wind - MOVES air (cannot create it)`. The **refusal is spelled out** rather than
+left as the absence of a word, because §3.2's makes-versus-moves is the most
+load-bearing fact in the engine. `spell >` prints the fixture's own effect line
+and the signs it is built from.
 
 **"It doesn't fire when the ring is closed."** It did. The world was a vacuum.
 
@@ -1718,3 +2225,72 @@ stroke at a time:
 | **Template**        | A recorded, normalized gesture the recognizer matches against  |
 | **Branch**          | Our term for an emergent reaction between elements (not canon) |
 | **Shell**           | A platform frontend — canvas (desktop) or web                  |
+
+
+---
+
+## 11. Assets, and what is not one
+
+`apps/canvas/assets/fonts/` holds **EB Garamond** and its licence, and that is
+the only binary the repository carries.
+
+**The typeface.** Bevy ships one font, a monospace, and it has two problems: no
+box-drawing, no typographic dashes, no degree sign — which is why every string
+this app prints had to be flattened to ASCII — and it looks like a terminal,
+which is the opposite of what a book of spells looks like. EB Garamond is cut
+after Claude Garamond's sixteenth-century romans, so it is the right century, and
+it is under the **SIL Open Font License 1.1**, which permits embedding and
+redistribution. `assets/fonts/OFL.txt` must stay beside it; that is the
+condition.
+
+Two hands, and picking between them is a decision each time. `Hand::script` for
+anything a person *reads* — buttons, hints, the caption over a seal. Bevy's own
+mono for anything in *columns*: a proportional serif makes the measurement
+tables ragged, and a table you cannot scan is worse than an ugly one.
+
+Baked in with `include_bytes!` rather than the asset server. `run.sh` builds a
+real `.app` bundle, and an asset path that survives bundling is one more thing
+to get wrong; M8's wasm build would need a third answer again. Eight hundred
+kilobytes in the binary buys one answer that works everywhere.
+
+**What the repository will not carry.** No manga panels, no anime frames, no
+traced-and-recoloured versions of either. That is somebody's artwork, and a
+hobby project with no income is still a copy — "non-commercial" is not a licence
+and "it promotes the work" is not a defence. The rune shapes in
+`templates.ron` are the same rule from the other direction: §2 has them traced
+by a person from the source, not invented and not scraped.
+
+None of that costs the project its look. The palette is a workbench — tooled
+leather, iron-gall ink, candle-brass, verdigris — and every colour is one a dye
+could have made. Colour is not copyrightable and a workshop is not a screenshot.
+
+
+---
+
+## 12. The built-in shapes
+
+`shapes.rs` holds a geometry for fire, water, wind, earth and light, and for the
+column, levitation and convergence signs.
+
+**They are not traced from the manga.** §2 says the rune shapes belong to the
+source and must be traced rather than invented, and `templates.ron` still ships
+empty because nobody has done that. These are **reconstructions of the community
+spell simulator's reconstructions** — simple geometry described in words and
+rebuilt: fire is a triangle on a stem, water is three teardrops, wind is an S
+with rays, earth is a bar over a chevron, light is a diamond in a square.
+
+So they carry a fan-named sign's standing: good enough to build on, honest about
+what they are, and **superseded the moment somebody traces the real thing**.
+`templates::with_built_ins` appends them *after* whatever was recorded and skips
+any name already taken, so a traced `fire` wins the day it exists.
+`a_recorded_rune_outranks_the_built_in_of_the_same_name` pins that.
+
+They live in **core** rather than in the shell because a shape is load-bearing
+now: the recognizer matches against these, so what a fire sigil looks like
+decides what a drawing *means*, and §4.2 keeps every decision about meaning in
+core. The shell draws them; it does not define them.
+
+Two tests do the work worth doing. `every_built_in_recognises_as_itself` — draw
+one and the recognizer names it. `no_two_built_ins_are_the_same_drawing` — every
+pair at least 0.15 apart, which is M4.8's own finding (a square and a ring at
+0.110 and 0.127) turned into a standing check on the shapes we actually ship.

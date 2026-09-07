@@ -13,6 +13,16 @@
 //!
 //! It goes away once ink rendering shows the same information implicitly.
 
+// Bevy systems declare their dependencies as parameters, so a readout that
+// looks at the pad, the reading, the panel's flags, the world and the
+// catalogue has six before it has said anything. Clippy's limit of seven is
+// aimed at ordinary functions, where a long list means a muddled abstraction;
+// here it means a system that reads five things, which is what a readout is.
+//
+// Module-level rather than six copies of the same `allow`: the reason is the
+// same in every case, and stating it once is stating it honestly.
+#![allow(clippy::too_many_arguments)]
+
 use bevy::gizmos::config::GizmoConfigStore;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
@@ -105,8 +115,19 @@ const TEMPLATE_MARK: Color = Color::srgba(0.92, 0.74, 0.28, 0.85);
 /// The grid the parcels live in. Faint - it is a ruler, not content.
 const FIELD_GRID: Color = Color::srgba(0.35, 0.45, 0.55, 0.16);
 
-/// A cell with mass in it.
+/// A cell holding more than a breath of air.
 const FIELD_FULL: Color = Color::srgba(0.30, 0.60, 0.75, 0.45);
+
+/// Density below which a cell is not worth shading.
+///
+/// The room is full of ambient air now, so "has any mass in it" is true of
+/// every cell on the board — and shading all of them turned the pad into a
+/// grid of boxes with the drawing lost inside it. Ambient air is one parcel of
+/// half a unit per cell, so anything above this is something that *arrived*.
+const DENSE_ENOUGH: f32 = 1.2;
+
+/// Density at which a cell is drawn at full strength.
+const PACKED_AT: f32 = 12.0;
 
 /// Degrees above ambient at which a parcel is drawn white-hot.
 ///
@@ -126,26 +147,7 @@ const PARCEL_Z: f32 = 5.0;
 /// `sim` must never learn one. An unknown substance gets a neutral grey rather
 /// than a panic or a guess, so adding one to `reactions.ron` shows up as
 /// something visible and plain rather than as nothing at all.
-fn substance_color(name: &str) -> Color {
-    match name {
-        "water" => Color::srgb(0.18, 0.45, 0.85),
-        "steam" => Color::srgb(0.82, 0.86, 0.92),
-        "ice" => Color::srgb(0.55, 0.85, 0.95),
-        "flame" => Color::srgb(0.95, 0.35, 0.10),
-        "heat" => Color::srgb(0.90, 0.55, 0.20),
-        "light" => Color::srgb(0.98, 0.92, 0.55),
-        "smoke" => Color::srgb(0.42, 0.40, 0.40),
-        "air" => Color::srgb(0.62, 0.82, 0.72),
-        "stone" => Color::srgb(0.48, 0.44, 0.40),
-        "sand" => Color::srgb(0.80, 0.68, 0.42),
-        "soil" => Color::srgb(0.38, 0.28, 0.20),
-        "wood" => Color::srgb(0.55, 0.38, 0.22),
-        "crystal" => Color::srgb(0.70, 0.60, 0.92),
-        "electricity" => Color::srgb(0.65, 0.55, 0.98),
-        "sound" => Color::srgb(0.85, 0.70, 0.85),
-        _ => Color::srgb(0.60, 0.58, 0.55),
-    }
-}
+use crate::particles::substance_color;
 
 /// One parcel's dot on screen, carrying its slot in the pool.
 ///
@@ -207,10 +209,7 @@ fn activation_color(state: assembly::Activation) -> Color {
 /// that ratios live in `RingRules` and lengths come from here (§4.2). Four pen
 /// widths: wide enough to forgive the sampling step, far too narrow for a
 /// deliberate gap.
-const CLOSURE_TOLERANCE: f32 = crate::INK_WIDTH * 4.0;
-
-/// How far ink may sit off a circle and still count as lying on it.
-const ON_RING_TOLERANCE: f32 = crate::INK_WIDTH * 2.5;
+use crate::reading::{ON_RING_TOLERANCE, RULES, Reading};
 
 /// Segments used to draw the gap arc.
 const GAP_RESOLUTION: usize = 24;
@@ -220,16 +219,6 @@ const INSPECT_MARK: Color = Color::srgba(0.55, 0.30, 0.75, 0.85);
 /// How near a ring's edge the cursor must come to inspect it.
 const INSPECT_REACH: f32 = 60.0;
 
-/// What core says a ring must satisfy to close a circuit.
-///
-/// Every number in here is a ratio, which is why it is core's to hold: a ratio
-/// means the same on any screen. `min_quality` is the one value canon does not
-/// give us — see `RingRules`.
-const RULES: assembly::RingRules = assembly::RingRules {
-    simple_tolerance: 0.08,
-    min_quality: 0.95,
-};
-
 /// Cells in the quality bar.
 const QUALITY_CELLS: usize = 10;
 
@@ -237,7 +226,7 @@ const QUALITY_CELLS: usize = 10;
 const LABEL_OFFSET: f32 = 24.0;
 /// Labels are smaller than the corner readouts — there can be a dozen of them
 /// on the pad at once, and they sit on top of the drawing.
-const LABEL_SIZE: f32 = 13.0;
+const LABEL_SIZE: f32 = 17.0;
 
 /// Draws the live readouts. Add it, remove it, nothing else reacts.
 pub struct DebugOverlayPlugin;
@@ -342,7 +331,6 @@ impl Plugin for DebugOverlayPlugin {
                     update_frame_line,
                     update_stroke_line,
                     update_fit_line,
-                    update_ring_labels,
                     place_inspector,
                     update_inspector,
                     place_matches,
@@ -350,8 +338,6 @@ impl Plugin for DebugOverlayPlugin {
                     draw_guides,
                     draw_stroke_ends,
                     draw_fits,
-                    draw_world,
-                    draw_parcels,
                 )
                     .after(crate::capture_stroke)
                     // Everything above is skipped outright when hidden, rather
@@ -362,11 +348,52 @@ impl Plugin for DebugOverlayPlugin {
         // Ring labels are spawned on demand, so unlike the fixed readouts there
         // is nothing for `toggle_overlay` to hide. They are dropped instead and
         // rebuilt on the next visible frame.
+        // The ring caption and the parcels are NOT debug. "What will this seal
+        // do" and "what is in the world" are the two questions a person has
+        // while drawing, and hiding them behind the measurement overlay meant
+        // turning the overlay off left the app unusable rather than clean.
+        // They ride their own toggles — `spell` and `world` — and still vanish
+        // with this file, which is what §0 asks.
         app.add_systems(
             Update,
-            (clear_ring_labels, clear_parcels).run_if(not(overlay_visible)),
+            (
+                update_ring_labels,
+                update_loose_labels,
+                draw_parcels,
+                draw_world,
+            )
+                .after(crate::capture_stroke)
+                .run_if(spell_or_world),
         );
+        app.add_systems(
+            Update,
+            (clear_ring_labels, clear_loose_labels, clear_parcels).run_if(not(spell_or_world)),
+        );
+
+        // The tracing board rides its own toggle too, and for the same reason
+        // the ring caption does: tracing runes is a *sitting*, and asking
+        // somebody to keep the whole measurement overlay up to see whether
+        // their sample was any good is asking them to read six blocks to find
+        // one number.
+        app.add_systems(
+            Update,
+            (place_trace, update_trace)
+                .chain()
+                .after(crate::capture_stroke)
+                .run_if(tracing_showing),
+        );
+        app.add_systems(Update, clear_trace.run_if(not(tracing_showing)));
     }
+}
+
+/// Run condition: is the tracing board showing?
+fn tracing_showing(tools: Option<Res<ToolState>>) -> bool {
+    tools.is_none_or(|state| state.trace)
+}
+
+/// Blanks the tracing board when it is switched off.
+fn clear_trace(mut panel: Single<&mut Text2d, With<TraceLine>>) {
+    panel.0.clear();
 }
 
 /// Hairlines for the overlay's own group. One pixel, no joints — these are
@@ -374,6 +401,15 @@ impl Plugin for DebugOverlayPlugin {
 fn thin_gizmos(mut store: ResMut<GizmoConfigStore>) {
     let (config, _) = store.config_mut::<DebugGizmos>();
     config.line.width = 1.0;
+}
+
+/// Run condition: is anything that is *not* a measurement showing?
+///
+/// The ring caption and the world are gated on their own toggles rather than on
+/// F1, so a person who wants the numbers gone can still see what their seal is
+/// about to do.
+fn spell_or_world(tools: Option<Res<ToolState>>) -> bool {
+    tools.is_none_or(|state| state.spell || state.sim)
 }
 
 /// Run condition: is the overlay showing?
@@ -480,6 +516,16 @@ struct InspectorLine;
 /// Marks the recogniser board, pinned under the cloud preview.
 #[derive(Component)]
 struct MatchLine;
+
+/// Marks the tracing board, pinned to the bottom-right.
+///
+/// Its own block rather than more rows on the recogniser board, because the two
+/// answer different questions. The board asks *what did the engine make of this
+/// ring*; tracing asks *is the sample I am about to save any good, and how many
+/// have I got*. Reading past one to reach the other is what made the corner
+/// unusable, and they are on separate toggles for the same reason.
+#[derive(Component)]
+struct TraceLine;
 
 /// A caption floating beside one fitted ring, carrying its slot in the pool.
 ///
@@ -608,6 +654,199 @@ fn spawn_overlay(mut commands: Commands) {
         Anchor::TOP_RIGHT,
         MatchLine,
     ));
+
+    // The opposite corner from the recogniser board, on purpose: while tracing
+    // you are looking at the shape under your hand, not at the ranking.
+    commands.spawn((
+        Text2d::new(""),
+        TextFont {
+            font_size: FontSize::Px(14.0),
+            ..default()
+        },
+        TextColor(Color::srgb(0.55, 0.88, 0.62)),
+        TextLayout::justify(Justify::Left),
+        Anchor::BOTTOM_RIGHT,
+        TraceLine,
+    ));
+}
+
+/// How close a distance is, as a percentage a person can read.
+///
+/// `100%` is an exact match and `0%` is [`naming::NEAR_ENOUGH`], the distance at
+/// which the compiler stops believing it. So the number is not a probability and
+/// does not pretend to be one — it is *where this drawing sits between perfect
+/// and rejected*, which is the question somebody tracing a rune is actually
+/// asking. Naming the threshold beside it is what keeps that honest.
+fn closeness(distance: f32) -> f32 {
+    (1.0 - distance / magic_core::naming::NEAR_ENOUGH).clamp(0.0, 1.0) * 100.0
+}
+
+/// The ink `record` would save right now: everything that is not a ring.
+///
+/// The same rule `ui::record::gestures` applies, and it has to be the same or
+/// the percentage would describe a different drawing from the one that gets
+/// written. Rings are excluded because a ring is the activator, not a rune —
+/// but only ink that really is a ring, so water's teardrops and light's diamond
+/// survive being part of their own sigil.
+fn tracing_ink(pad: &InkPad, reading: &Reading) -> Vec<crate::Point> {
+    let rings: Vec<u32> = reading
+        .rings
+        .iter()
+        .filter(|ring| ring.is_simple(crate::reading::RULES.simple_tolerance))
+        .flat_map(|ring| ring.strokes.clone())
+        .collect();
+    pad.points
+        .iter()
+        .copied()
+        .filter(|point| !rings.contains(&point.stroke_id))
+        .collect()
+}
+
+/// Pins the tracing board to the bottom-right, above the hint line.
+fn place_trace(
+    window: Single<&Window>,
+    tools: Option<Res<ToolState>>,
+    mut panel: Single<&mut Transform, With<TraceLine>>,
+) {
+    let half = Vec2::new(window.width(), window.height()) * 0.5;
+    panel.translation.x = half.x - MARGIN - panel_reserve(tools.as_deref());
+    // Clear of the hint line, which runs along the very bottom at 16px.
+    panel.translation.y = -half.y + MARGIN + 34.0;
+}
+
+/// The tracing board: what `record` will save, and how good it is.
+///
+/// Decides nothing (§4.2). It reads the pad, asks the recognizer, and prints —
+/// the one judgement on screen is [`closeness`], which names its own threshold.
+fn update_trace(
+    pad: Res<InkPad>,
+    tools: Option<Res<ToolState>>,
+    lore: Res<Lore>,
+    runes: Res<Runes>,
+    reading: Res<Reading>,
+    mut panel: Single<&mut Text2d, With<TraceLine>>,
+) {
+    if !tools.as_deref().is_none_or(|state| state.trace) {
+        panel.0.clear();
+        return;
+    }
+
+    let all = runes.all();
+    let catalog = lore.0.as_ref();
+
+    // What the next recording will be filed as.
+    let target = tools
+        .as_deref()
+        .and_then(|state| state.tracing)
+        .zip(catalog)
+        .and_then(|(at, catalog)| {
+            let list = crate::sim::traceable(catalog);
+            list.get(at)
+                .map(|(name, kind)| (name.clone(), *kind, at + 1, list.len()))
+        });
+
+    let mut out = String::from("-- tracing --\n");
+    out.push_str(&match &target {
+        Some((name, kind, at, of)) => {
+            format!("target     {name}  ({} {at}/{of})\n", kind.to_lowercase())
+        }
+        None => "target     none - press 'trace >' to choose a rune\n".to_string(),
+    });
+
+    // How many samples of each rune are on file. Several samples of one rune is
+    // how a hand-drawn shape gets recognised reliably, so the count is the
+    // number a person tracing is working *toward* and belongs on screen.
+    let mut tally: Vec<(String, usize)> = Vec::new();
+    for (_, rune) in &all {
+        let name = rune.template.name.clone();
+        match tally.iter_mut().find(|(had, _)| *had == name) {
+            Some((_, n)) => *n += 1,
+            None => tally.push((name, 1)),
+        }
+    }
+    tally.sort();
+    out.push_str(&format!(
+        "on file    {} sample(s), {} rune(s)\n",
+        all.len(),
+        tally.len()
+    ));
+    for chunk in tally.chunks(4) {
+        let row: Vec<String> = chunk
+            .iter()
+            .map(|(name, n)| format!("{name} x{n}"))
+            .collect();
+        out.push_str(&format!("           {}\n", row.join("  ")));
+    }
+
+    let ink = tracing_ink(&pad, &reading);
+    if ink.is_empty() {
+        panel.0 = plain(&(out + "ink        nothing to save - the pad holds only rings\n"));
+        return;
+    }
+    let strokes = ink.chunk_by(|a, b| a.stroke_id == b.stroke_id).count();
+    out.push_str(&format!(
+        "ink        {strokes} stroke(s), {} pts - this is what record saves\n",
+        ink.len()
+    ));
+
+    let Some(cloud) = recognizer::normalize(&ink, stroke::MATCH_POINTS) else {
+        panel.0 = plain(&(out + "match      nothing to normalise\n"));
+        return;
+    };
+    if all.is_empty() {
+        panel.0 = plain(&(out + "match      no rune has a shape yet - press record\n"));
+        return;
+    }
+
+    let shapes: Vec<recognizer::Template> =
+        all.iter().map(|(_, rune)| rune.template.clone()).collect();
+    let ranked = recognizer::rank(&cloud, &shapes);
+
+    for (place, found) in ranked.iter().take(3).enumerate() {
+        let rune = all[found.index].1;
+        let label = if place == 0 {
+            "match     "
+        } else {
+            "           "
+        };
+        out.push_str(&format!(
+            "{label} {:<12} {:>3.0}%   miss {:.3}\n",
+            rune.template.name,
+            closeness(found.distance),
+            found.distance,
+        ));
+    }
+
+    // Against the rune you said you were tracing, which is not always the one
+    // that won — and when it is not, that is the whole thing worth knowing.
+    out.push_str(&match (&target, ranked.first()) {
+        (Some((name, _, _, _)), Some(best)) => {
+            let mine = ranked
+                .iter()
+                .find(|found| all[found.index].1.template.name == *name);
+            let winner = &all[best.index].1.template.name;
+            match mine {
+                _ if winner == name => format!(
+                    "verdict    reads as {name} at {:.0}% - a good sample\n",
+                    closeness(best.distance)
+                ),
+                Some(found) => format!(
+                    "verdict    reads as {winner}, not {name} ({:.0}% vs {:.0}%)\n",
+                    closeness(best.distance),
+                    closeness(found.distance)
+                ),
+                None => format!("verdict    reads as {winner} - no {name} on file yet\n"),
+            }
+        }
+        (None, Some(best)) => format!(
+            "verdict    reads as {} at {:.0}%\n",
+            all[best.index].1.template.name,
+            closeness(best.distance)
+        ),
+        _ => "verdict    nothing to compare against\n".to_string(),
+    });
+    out.push_str("scale      100% is exact, 0% is the distance the compiler rejects");
+    panel.0 = plain(&out);
 }
 
 /// Pins the inspector to the top-left corner.
@@ -650,7 +889,11 @@ fn plain(text: &str) -> String {
 ///
 /// Reads the simulation and prints it. Decides nothing (§4.2) — every number
 /// here is one `magic_core::sim` already computed.
-fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState>) -> String {
+fn world_report(
+    world: Option<&crate::sim::Simulation>,
+    tools: Option<&ToolState>,
+    reading: &Reading,
+) -> String {
     if !tools.is_none_or(|state| state.sim) {
         return String::new();
     }
@@ -666,7 +909,7 @@ fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState
         .fold(f32::NEG_INFINITY, f32::max);
 
     format!(
-        "\n-- world --\n         naming     {}\n         pour       {}\n         state      {}   tick {}   t {:.2}s\n         grid       {}x{} cells of {:.0}px\n         parcels    {}   mass {:.2}   heat {:.0}\n         motion     momentum {:.0}, {:.0}   hottest {}\n         holds      {}\n         rules      {} loaded   over {}\n         reacting   {}\n         last cast  {}",
+        "\n-- world --\n         naming     {}\n         pour       {}\n         state      {}   tick {}   t {:.2}s\n         grid       {}x{} cells of {:.0}px\n         parcels    {}   mass {:.2}   heat {:.0}\n         props      {}\n         motion     momentum {:.0}, {:.0}   hottest {}\n         holds      {}\n         rules      {} loaded   over {}\n         reacting   {}\n         summoning  {}\n         last cast  {}",
         // What the `name` section has the pad's seals set to. Worth a line of
         // its own: with `templates.ron` empty this is the *only* thing that
         // makes a seal compile to anything but a discharge, so a person who
@@ -683,9 +926,12 @@ fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState
                         .get(index)
                         .map(|id| format!("sigil {}", id.as_str()))
                         .unwrap_or_else(|| "sigil (out of range)".to_string()),
+                    // The real count. This said `0` from a placeholder I
+                    // never came back to, which made the recognizer look
+                    // permanently empty while it was busy naming things.
                     (None, None) => format!(
-                        "nothing - the recognizer names it, and it knows {} rune(s)",
-                        0
+                        "nothing forced - the drawing speaks, over {} known shape(s)",
+                        reading.shapes.len()
                     ),
                 },
                 None => "-".to_string(),
@@ -707,6 +953,26 @@ fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState
         field.parcels().len(),
         field.mass(),
         field.heat(),
+        // Props are mass the field cannot see, and burning moves mass from one
+        // to the other — so watching only `field.mass()` shows a world that
+        // invents matter. Both totals, side by side.
+        if world.sim.props.is_empty() {
+            "none on the paper - press kindle".to_string()
+        } else {
+            let alight = world.sim.props.iter().filter(|p| p.burning).count();
+            let wet = world
+                .sim
+                .props
+                .iter()
+                .filter(|p| p.wetness >= world.sim.prop_rules.quench)
+                .count();
+            let lit = world.sim.props.iter().filter(|p| p.lit > 0.35).count();
+            format!(
+                "{}   mass {:.2}   {alight} alight   {wet} soaked   {lit} lit",
+                world.sim.props.len(),
+                world.sim.prop_mass(),
+            )
+        },
         field.momentum().x,
         field.momentum().y,
         if hottest.is_finite() {
@@ -756,12 +1022,34 @@ fn world_report(world: Option<&crate::sim::Simulation>, tools: Option<&ToolState
                     last.heat,
                     last.fired
                         .iter()
-                        .map(|(id, mass)| format!("{id} {mass:.2}"))
+                        .map(|shot| format!("{} {:.2}", shot.rule, shot.mass))
                         .collect::<Vec<_>>()
                         .join(" | ")
                 )
             } else {
                 "nothing this tick".to_string()
+            }
+        },
+        // How long each running spell has left. The question a person actually
+        // has while watching one is "is this about to stop", and until now the
+        // only answer was to keep watching.
+        {
+            let running = &world.sim.channels;
+            if running.is_empty() {
+                "nothing running".to_string()
+            } else {
+                running
+                    .iter()
+                    .map(|open| {
+                        let name = match &open.spell.driver {
+                            magic_core::Driver::Sigil(id) => id.as_str().to_string(),
+                            magic_core::Driver::Substitute(id) => id.as_str().to_string(),
+                            magic_core::Driver::Discharge => "discharge".to_string(),
+                        };
+                        format!("{name} {:.1}s left", open.left)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("   ")
             }
         },
         world.last.as_deref().unwrap_or("nothing cast yet"),
@@ -797,14 +1085,18 @@ fn draw_world(
             let Some(cell) = field.cell_by(col, row) else {
                 continue;
             };
-            if cell.density <= 0.0 {
+            if cell.density < DENSE_ENOUGH {
                 continue;
             }
+            // Shaded by how packed it is, so a pool reads as a pool rather than
+            // as a uniform stencil. Square-rooted because the eye compares
+            // brightness on something closer to a curve than a line.
+            let packed = (cell.density / PACKED_AT).clamp(0.0, 1.0).sqrt();
             let at = field.cell_center(col, row);
             gizmos.rect_2d(
                 Isometry2d::from_translation(Vec2::new(at.x, at.y)),
                 Vec2::splat(size * 0.92),
-                FIELD_FULL,
+                FIELD_FULL.with_alpha(FIELD_FULL.alpha() * packed),
             );
         }
     }
@@ -1151,12 +1443,13 @@ fn update_inspector(
     lore: Res<Lore>,
     world: Option<Res<crate::sim::Simulation>>,
     mut panel: Single<&mut Text2d, With<InspectorLine>>,
+    reading: Res<Reading>,
 ) {
-    let rings = circle_search(&pad);
+    let rings = &reading.rings;
     let (camera, camera_transform) = *camera;
     let cursor = cursor_world(&window, camera, camera_transform);
 
-    let Some((slot, by_hover)) = inspected(&rings, cursor) else {
+    let Some((slot, by_hover)) = inspected(rings, cursor) else {
         panel.0 = "-- no ring --\ndraw a loop".to_string();
         return;
     };
@@ -1283,8 +1576,8 @@ fn update_inspector(
         held.points,
         held.extent,
         fit.radius,
-        spell_report(&pad, &rings, slot, &lore, tools.as_deref()),
-        world_report(world.as_deref(), tools.as_deref()),
+        spell_report(&pad, rings, slot, &lore, tools.as_deref()),
+        world_report(world.as_deref(), tools.as_deref(), &reading),
     ));
 }
 
@@ -1365,6 +1658,22 @@ impl Runes {
 /// tool, the file is one we wrote ourselves, and a watcher is a dependency and
 /// a thread for something one syscall already answers.
 fn reload_runes(mut runes: ResMut<Runes>) {
+    // The browser has no files to watch. The built-ins are compiled in, so the
+    // web build still recognises everything the desktop one does — it just
+    // cannot pick up a rune traced since it started.
+    #[cfg(target_arch = "wasm32")]
+    {
+        runes.live_note = "the browser has no files to watch".to_string();
+        return;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    reload_from_disk(&mut runes);
+}
+
+/// The desktop half: watch the recorder's file and reread it when it changes.
+#[cfg(not(target_arch = "wasm32"))]
+fn reload_from_disk(runes: &mut Runes) {
     let stamp = std::fs::metadata(crate::ui::record::OUTFILE)
         .and_then(|meta| meta.modified())
         .ok();
@@ -1415,6 +1724,7 @@ fn update_matches(
     lore: Res<Lore>,
     runes: Res<Runes>,
     mut panel: Single<&mut Text2d, With<MatchLine>>,
+    reading: Res<Reading>,
 ) {
     if !tools.is_none_or(|state| state.runes) {
         panel.0.clear();
@@ -1450,11 +1760,11 @@ fn update_matches(
         runes.live_note,
     );
 
-    let rings = circle_search(&pad);
+    let rings = &reading.rings;
     let (camera, camera_transform) = *camera;
     let cursor = cursor_world(&window, camera, camera_transform);
 
-    let Some((slot, _)) = inspected(&rings, cursor) else {
+    let Some((slot, _)) = inspected(rings, cursor) else {
         panel.0 = plain(&out) + "gesture    - no ring to look inside\n";
         return;
     };
@@ -1492,7 +1802,7 @@ fn update_matches(
     let furthest = ranked.last().map_or(0.0, |found| found.distance);
     let spread = (furthest - nearest).max(f32::EPSILON);
 
-    out.push_str("ranked     distance is the mean miss, in gesture widths\n");
+    out.push_str("ranked     % is 100 at exact, 0 at the distance the compiler rejects\n");
     for (place, found) in ranked.iter().take(RANKED_SHOWN).enumerate() {
         let (source, rune) = all[found.index];
         let standing = 1.0 - (found.distance - nearest) / spread;
@@ -1501,10 +1811,11 @@ fn update_matches(
             .map(|cell| if cell < filled { '#' } else { '.' })
             .collect();
         out.push_str(&format!(
-            "{:>3}  {:<18} {:<6} {source:<7} {:.3}  {bar}\n",
+            "{:>3}  {:<16} {:<6} {source:<6} {:>3.0}% {:.3}  {bar}\n",
             place + 1,
             rune.template.name,
             format!("{:?}", rune.kind),
+            closeness(found.distance),
             found.distance,
         ));
     }
@@ -1563,7 +1874,7 @@ fn spell_report(
     // `Warning::Unreadable` was added to stop. It also could not know about
     // nesting or links, because rules 4, 5 and 6 are questions about several
     // glyphs and `compile` only ever sees one.
-    let glyphs = assembly::glyphs(rings, &pad.points, ON_RING_TOLERANCE);
+    let glyphs = assembly::glyphs(rings, &pad.points, ON_RING_TOLERANCE, &RULES);
     let spells = magic_core::compile_all(&glyphs, catalog, &magic_core::CompileRules::default());
     let (Some(glyph), Some(spell)) = (glyphs.get(slot), spells.get(slot)) else {
         return "\nspell      no glyph for this ring".to_string();
@@ -1805,7 +2116,9 @@ fn draw_stroke_ends(pad: Res<InkPad>, mut gizmos: Gizmos<DebugGizmos>) {
 /// text every frame churns the archetype and makes the labels flicker.
 fn update_ring_labels(
     mut commands: Commands,
-    pad: Res<InkPad>,
+    hand: Option<Res<crate::hand::Hand>>,
+    tools: Option<Res<ToolState>>,
+    world: Option<Res<crate::sim::Simulation>>,
     mut labels: Query<(
         Entity,
         &RingLabel,
@@ -1813,9 +2126,13 @@ fn update_ring_labels(
         &mut TextColor,
         &mut Transform,
     )>,
+    reading: Res<Reading>,
 ) {
-    let rings = circle_search(&pad);
+    let rings = &reading.rings;
 
+    // Compiled once for every caption rather than once per caption. Naming is
+    // applied first, so the label says what will actually happen when this seal
+    // fires — not what it would do if nobody had picked a sigil.
     let mut pool: Vec<(Entity, usize)> = labels
         .iter()
         .map(|(entity, slot, ..)| (entity, slot.0))
@@ -1829,6 +2146,11 @@ fn update_ring_labels(
         commands.spawn((
             Text2d::new(""),
             TextFont {
+                // The caption is the one thing on the paper a person *reads*
+                // rather than measures, so it gets the script hand.
+                font: hand.as_ref().map_or_else(Default::default, |h| {
+                    bevy::text::FontSource::Handle(h.script.clone())
+                }),
                 font_size: FontSize::Px(LABEL_SIZE),
                 ..default()
             },
@@ -1859,12 +2181,68 @@ fn update_ring_labels(
         // Member strokes are printed because a ring made of several strokes is
         // the normal case, and knowing which ones it swallowed is the whole
         // reason a closing line no longer looks like a ring of its own.
-        text.0 = format!(
-            "{:?} | r {:.0} | q {:.2}\n{state}",
-            ring.strokes,
-            ring.fit.radius,
-            ring.fit.quality()
-        );
+        // What this seal will actually produce, over the ring it belongs to.
+        // A number nobody can name is a measurement; a name is an answer, and
+        // the question a person actually has in front of a drawing is "is this
+        // going to be fire or water".
+        let makes = reading
+            .spell(slot.0)
+            .map(|spell| match (&spell.driver, &spell.demand) {
+                (magic_core::Driver::Discharge, _) => "DISCHARGE - a blast".to_string(),
+                (driver, Some(demand)) if demand.substance.is_empty() => {
+                    // Guidance, obliviation and doorways act on no substance at
+                    // all, and `MOVES ` with nothing after it is a sentence
+                    // that stops halfway.
+                    let name = match driver {
+                        magic_core::Driver::Sigil(id) => id.as_str().to_string(),
+                        magic_core::Driver::Substitute(id) => id.as_str().to_string(),
+                        magic_core::Driver::Discharge => "discharge".to_string(),
+                    };
+                    format!("{name} - acts on no substance")
+                }
+                (driver, Some(demand)) => {
+                    let name = match driver {
+                        magic_core::Driver::Sigil(id) => id.as_str().to_string(),
+                        magic_core::Driver::Substitute(id) => id.as_str().to_string(),
+                        magic_core::Driver::Discharge => "discharge".to_string(),
+                    };
+                    let verb = if demand.must_find { "MOVES" } else { "MAKES" };
+                    format!("{name} - {verb} {}", demand.substance.join(", "))
+                }
+                (driver, None) => format!("{driver:?} - no substance"),
+            })
+            .unwrap_or_else(|| "unread".to_string());
+
+        // With the measurement overlay off, the caption is the *answer* and
+        // nothing else. Stroke ids and rms are what you want while debugging
+        // the fitter, and noise while drawing a spell.
+        let measuring = tools.as_deref().is_none_or(|state| state.debug_overlay);
+        // A seal still summoning says so, over the seal. Everything else about
+        // a running spell is in the world block; this is the one fact you want
+        // without looking away from the drawing.
+        let running = world
+            .as_ref()
+            .and_then(|world| {
+                let centre = magic_core::sim::Vec2::new(ring.fit.center.x, ring.fit.center.y);
+                world
+                    .sim
+                    .channels
+                    .iter()
+                    .find(|open| (open.at - centre).length() < ring.fit.radius)
+            })
+            .map(|open| format!("\nsummoning - {:.1}s left", open.left))
+            .unwrap_or_default();
+
+        text.0 = if measuring {
+            format!(
+                "{makes}\n{:?} | r {:.0} | q {:.2}\n{state}{running}",
+                ring.strokes,
+                ring.fit.radius,
+                ring.fit.quality()
+            )
+        } else {
+            format!("{makes}\n{state}{running}")
+        };
         color.0 = activation_color(activation);
 
         // An armed ring puts its caption at the widest hole, which is where
@@ -1880,6 +2258,65 @@ fn update_ring_labels(
         let out = Vec2::from_angle(angle) * (ring.fit.radius + LABEL_OFFSET);
         transform.translation.x = ring.fit.center.x + out.x;
         transform.translation.y = ring.fit.center.y + out.y;
+    }
+}
+
+/// A mark outside every ring: named, and inert.
+#[derive(Component)]
+struct LooseLabel(usize);
+
+/// Captions each mark that belongs to no ring.
+///
+/// Canon rule 1 makes these contribute nothing, and §3.3 makes them inert
+/// rather than invalid — but inert should not mean invisible. Knowing the app
+/// read your fire sigil correctly is exactly what you want *before* drawing a
+/// ring around it, and until now the only way to find out was to draw one.
+fn update_loose_labels(
+    mut commands: Commands,
+    hand: Option<Res<crate::hand::Hand>>,
+    tools: Option<Res<ToolState>>,
+    reading: Res<Reading>,
+    mut labels: Query<(&LooseLabel, &mut Text2d, &mut Transform, &mut Visibility)>,
+) {
+    let showing = tools.is_none_or(|state| state.spell);
+    let marks: &[(magic_core::Vec2, String)] = if showing { &reading.loose } else { &[] };
+
+    let mut seen = 0usize;
+    for (slot, mut text, mut transform, mut visible) in &mut labels {
+        seen = seen.max(slot.0 + 1);
+        match marks.get(slot.0) {
+            Some((at, said)) => {
+                text.0 = plain(said);
+                transform.translation = Vec3::new(at.x, at.y - LABEL_OFFSET, 1.0);
+                *visible = Visibility::Inherited;
+            }
+            None => *visible = Visibility::Hidden,
+        }
+    }
+
+    for slot in seen..marks.len() {
+        commands.spawn((
+            Text2d::new(""),
+            TextFont {
+                font: hand.as_ref().map_or_else(Default::default, |h| {
+                    bevy::text::FontSource::Handle(h.script.clone())
+                }),
+                font_size: FontSize::Px(LABEL_SIZE * 0.8),
+                ..default()
+            },
+            // Faint: it is a note about ink that is doing nothing.
+            TextColor(Color::srgba(0.45, 0.42, 0.38, 0.85)),
+            TextLayout::justify(Justify::Center),
+            Transform::from_xyz(0.0, 0.0, 1.0),
+            LooseLabel(slot),
+        ));
+    }
+}
+
+/// Drops the loose captions with everything else.
+fn clear_loose_labels(mut commands: Commands, labels: Query<Entity, With<LooseLabel>>) {
+    for entity in &labels {
+        commands.entity(entity).despawn();
     }
 }
 
@@ -2067,12 +2504,16 @@ fn update_stroke_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<Strok
 /// plus the line that closes it, or two halves of a split seal — so a
 /// per-stroke readout would call the closing line a ring of its own and leave
 /// the ring it closed permanently open.
-fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>>) {
+fn update_fit_line(
+    pad: Res<InkPad>,
+    reading: Res<Reading>,
+    mut line: Single<&mut Text2d, With<FitLine>>,
+) {
     let strokes = pad
         .points
         .chunk_by(|a, b| a.stroke_id == b.stroke_id)
         .count();
-    let rings = circle_search(&pad);
+    let rings = &reading.rings;
 
     let (head, state) = match rings.first() {
         Some(r) => (
@@ -2131,32 +2572,18 @@ fn update_fit_line(pad: Res<InkPad>, mut line: Single<&mut Text2d, With<FitLine>
     );
 }
 
-/// The pad's rings, on this frame's ink.
-///
-/// Recomputed per system rather than cached in a resource: it costs
-/// microseconds, and a cache would be a second copy of the truth that can go
-/// stale between the readout and the gizmos.
-fn circle_search(pad: &InkPad) -> Vec<assembly::RingCandidate> {
-    assembly::find_rings(
-        &pad.points,
-        &assembly::RingSearch {
-            // Ink this far off the circle still counts as on it, which is what
-            // lets a separately drawn closing line join the ring it closes.
-            on_ring: ON_RING_TOLERANCE,
-            join: CLOSURE_TOLERANCE,
-            ..default()
-        },
-    )
-}
-
 /// Draws the fit itself: the circle, its centre, and where the ink misses it.
 ///
 /// Every stroke gets its circle. Only the newest gets the band, the centroid
 /// mark and the whiskers — all of them at once is unreadable, and the newest
 /// stroke is the one being judged.
 ///
-/// Refits on every frame rather than caching. It costs a few microseconds
-/// against a 16 700µs budget, and a cache is a second copy of the truth.
+/// Reads `Reading` rather than refitting. This used to say a cache would be "a
+/// second copy of the truth" and refit here every frame — which was true of one
+/// readout and wrong once there were eight, because eight copies of the work is
+/// not one copy of the truth. `reading.rs` is the single copy now, and the
+/// argument that a cache goes stale is answered by recomputing it whenever the
+/// ink or the naming changes rather than by not having one.
 fn draw_fits(
     pad: Res<InkPad>,
     window: Single<&Window>,
@@ -2164,11 +2591,12 @@ fn draw_fits(
     tools: Option<Res<ToolState>>,
     runes: Res<Runes>,
     mut gizmos: Gizmos<DebugGizmos>,
+    reading: Res<Reading>,
 ) {
     let inset = panel_reserve(tools.as_deref());
-    let rings = circle_search(&pad);
+    let rings = &reading.rings;
     let (camera, camera_transform) = *camera;
-    let focus = inspected(&rings, cursor_world(&window, camera, camera_transform)).map(|(s, _)| s);
+    let focus = inspected(rings, cursor_world(&window, camera, camera_transform)).map(|(s, _)| s);
 
     for (index, candidate) in rings.iter().enumerate() {
         let fit = candidate.fit;

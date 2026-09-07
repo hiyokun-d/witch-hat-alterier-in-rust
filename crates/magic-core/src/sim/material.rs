@@ -104,9 +104,27 @@ pub struct MaterialDef {
     /// How firmly a resting `Solid` or `Granular` parcel is held, `0..=1`.
     #[serde(default)]
     pub friction: f32,
+    /// How hard the substance resists being crowded, per second.
+    ///
+    /// The piece that makes a liquid *pool* rather than behave like heavy air.
+    /// Buoyancy and cohesion between them give water something that falls and
+    /// stays together, and neither of them stops it all collapsing into one
+    /// cell — a liquid is nearly incompressible, and without a term saying so
+    /// there is no surface, no level, and no heap.
+    #[serde(default)]
+    pub stiffness: f32,
     /// Rendering only, `0..=1`. Core never reads it; the shell does.
     #[serde(default)]
     pub glow: f32,
+    /// The temperature at which a *prop* made of this substance catches fire.
+    ///
+    /// `None` for anything that does not burn, which is most of the book — and
+    /// the absence is the point, because it is what makes a stone plinth a
+    /// thing you can safely stand a fire on. Read only by
+    /// [`super::prop::step_props`]; a parcel of wood does not burn, since a
+    /// parcel is a fluid and combustion here is a property of a body.
+    #[serde(default)]
+    pub ignites_at: Option<f32>,
     #[serde(default)]
     pub note: Option<String>,
 }
@@ -180,7 +198,9 @@ impl Materials {
             cohesion: 2.0,
             turbulence: 0.0,
             friction: 0.0,
+            stiffness: 0.0,
             glow: 0.0,
+            ignites_at: None,
             note: None,
         }
     }

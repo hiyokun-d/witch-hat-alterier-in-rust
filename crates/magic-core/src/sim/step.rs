@@ -35,6 +35,19 @@ pub struct SimRules {
     pub mixing: f32,
     /// How fast everything drifts back to [`AMBIENT`], per second.
     pub cooling: f32,
+    /// Mass in a cell above which a stiff substance starts pushing back.
+    ///
+    /// A stand-in for a rest density: below it a liquid is happy, above it the
+    /// parcels crowd and shove apart. **Ours**, and the one number that decides
+    /// whether a pool looks like a pool.
+    pub rest_density: f32,
+    /// Whether the field has walls at all.
+    ///
+    /// On, nothing escapes and mass is conserved exactly — which is what makes
+    /// every conservation property in M6.8 testable. Off, a parcel that leaves
+    /// is *gone*, and the total falls. Both are honest; only one is measurable,
+    /// which is why walls are the default.
+    pub walls: bool,
     /// How much speed survives hitting a wall, `0..=1`. Never `1.0` — a
     /// perfect wall is a trampoline and nothing ever comes to rest.
     pub restitution: f32,
@@ -53,6 +66,8 @@ impl Default for SimRules {
             drag: 0.6,
             mixing: 3.0,
             cooling: 0.4,
+            walls: true,
+            rest_density: 6.0,
             restitution: 0.25,
             // Stiff on purpose. At 6.0 a held parcel sagged 19px under gravity
             // before the anchor balanced it, which is a sag, not a reset —
@@ -138,13 +153,65 @@ pub fn step(field: &mut Field, rules: &SimRules, materials: &Materials, tick: u6
         })
         .collect();
 
+    // Pressure needs to know what is *around* a parcel, not just what is in its
+    // own cell, so the four neighbours are read up front alongside the cell —
+    // and read before anything moves, for the same reason everything else here
+    // is: a parcel that shoved its neighbour first would make the answer depend
+    // on where it sat in the list.
+    let crowding: Vec<(Vec2, f32)> = field
+        .parcels()
+        .iter()
+        .map(|parcel| {
+            let Some((col, row)) = field.cell_at(parcel.at) else {
+                return (Vec2::ZERO, 0.0);
+            };
+            let Some(cell) = field.cell_by(col, row) else {
+                return (Vec2::ZERO, 0.0);
+            };
+            let here = cell.density;
+            let size = field.cell_size();
+
+            // Two terms, and both are needed.
+            //
+            // The **gradient** is what levels a pool: away from whichever
+            // neighbour is fuller. On its own it is useless for a heap, because
+            // a lone overdense cell surrounded by empty ones pushes equally in
+            // all four directions and therefore not at all — the sum cancels
+            // exactly, which is how the first version came to move a pile 0.55
+            // pixels in ninety ticks.
+            let mut push = Vec2::ZERO;
+            for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                let (nc, nr) = (col as i32 + dx, row as i32 + dy);
+                if nc < 0 || nr < 0 {
+                    continue;
+                }
+                let there = field
+                    .cell_by(nc as usize, nr as usize)
+                    .map_or(0.0, |cell| cell.density);
+                let difference = here - there;
+                if difference > 0.0 {
+                    push += Vec2::new(-dx as f32, -dy as f32) * (difference / size);
+                }
+            }
+
+            // The **centroid** term is what breaks a heap: away from where the
+            // mass in this cell actually sits. It vanishes in an even pool,
+            // because there a parcel already is where the mass is.
+            let apart = (parcel.at - cell.centroid).normalize_or_zero();
+            (push + apart * (here / size), here)
+        })
+        .collect();
+
     let gravity = rules.gravity;
     let mixing = (rules.mixing * dt).clamp(0.0, 1.0);
     let cooling = (rules.cooling * dt).clamp(0.0, 1.0);
     let pull = (rules.repetition * dt).clamp(0.0, 1.0);
     let floor = field.bounds().0.y + field.cell_size();
 
-    for (parcel, (cell_temperature, cell_flow)) in field.parcels_mut().iter_mut().zip(seen) {
+    let rest = rules.rest_density.max(f32::EPSILON);
+    for ((parcel, (cell_temperature, cell_flow)), (crowd, density)) in
+        field.parcels_mut().iter_mut().zip(seen).zip(crowding)
+    {
         let material = materials.get(parcel.substance.as_str());
         parcel.life -= dt;
 
@@ -152,6 +219,19 @@ pub fn step(field: &mut Field, rules: &SimRules, materials: &Materials, tick: u6
         // says "flame goes up" — it comes out of the density.
         let lift = materials.buoyancy(parcel.substance.as_str(), parcel.temperature);
         parcel.velocity += gravity * (lift * dt);
+
+        // Pressure. A liquid is nearly incompressible, and without a term
+        // saying so water has no surface and no level — it collapses into
+        // whichever cell is lowest and sits there as a dot. Scaled by how far
+        // past the rest density the cell has been pushed, so a thin scatter
+        // feels nothing and a heap pushes hard.
+        // Only once the cell is actually crowded. Below the rest density a
+        // liquid is happy and pushes on nothing, which is what stops a thin
+        // scatter of droplets flying apart.
+        if material.stiffness > 0.0 && density > rest {
+            let over = ((density - rest) / rest).min(4.0);
+            parcel.velocity += crowd.normalize_or_zero() * (material.stiffness * over * dt);
+        }
 
         // Toward the mean flow of the cell. This is the liquid/gas difference:
         // water matches its neighbours and moves as a body, flame does not.
@@ -193,8 +273,19 @@ pub fn step(field: &mut Field, rules: &SimRules, materials: &Materials, tick: u6
         }
     }
 
-    field.confine(rules.restitution);
+    if rules.walls {
+        field.confine(rules.restitution);
+    } else {
+        // No walls: what leaves is gone. Reported by the falling mass rather
+        // than hidden, because silently losing matter is the one thing §3.2
+        // cannot survive.
+        field.spill();
+    }
     field.sweep();
+    // Merge before settling, so the cells describe the parcels that will
+    // actually be there next tick — and so a reacting world stops growing.
+    field.coalesce();
+    field.scrub();
     field.settle();
 }
 

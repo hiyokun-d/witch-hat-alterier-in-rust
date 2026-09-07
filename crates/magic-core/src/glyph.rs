@@ -128,6 +128,15 @@ pub struct Ring {
     radius: f32,
     closed: bool,
     quality: f32,
+    /// Whether the ink was a **ring** at all, as opposed to a triangle, a
+    /// spiral or a figure-eight that happened to fit a circle.
+    ///
+    /// Kept apart from `closed` and `quality` because it answers a different
+    /// question, and conflating the three is exactly how a fire sigil drawn on
+    /// its own came to fire as canon rule 9's explosion: its triangle is a
+    /// closed loop, it fits a circle well enough, and nothing downstream ever
+    /// asked whether it was round.
+    simple: bool,
 }
 
 impl Ring {
@@ -141,7 +150,21 @@ impl Ring {
             radius,
             closed,
             quality: quality.clamp(0.0, 1.0),
+            // Assumed, so every existing caller keeps its meaning. Only the
+            // ring search knows otherwise, and it says so with `not_a_ring`.
+            simple: true,
         }
+    }
+
+    /// Marks the ink as not a ring: tangled, doubled, or not round.
+    pub fn not_a_ring(mut self) -> Ring {
+        self.simple = false;
+        self
+    }
+
+    /// Whether the ink is a ring rather than some other closed shape.
+    pub fn is_simple(&self) -> bool {
+        self.simple
     }
 
     /// Where the ring sits on the canvas.

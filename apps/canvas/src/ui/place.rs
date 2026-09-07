@@ -9,10 +9,17 @@
 //! you are shown and what you get cannot drift apart. That is the only reason
 //! a preview is worth having.
 
+// Same reason as `debug.rs`: a Bevy system declares its dependencies as
+// parameters, so a handler that reads the mouse, the keyboard, the sheet, the
+// pointer, the tools, the drag state, the pad and the lesson has eight before
+// it has done anything. Clippy's limit targets muddled abstractions; this is a
+// list of things the drag genuinely touches.
+#![allow(clippy::too_many_arguments)]
+
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-use super::{Mode, Pointer, RADIUS_RANGE, ToolState, stamp};
+use super::{Mode, Pointer, RADIUS_RANGE, Shape, ToolState, stamp};
 use crate::{InkPad, PaperShape};
 
 /// Below this, a drag was a click and the panel's radius is used instead.
@@ -86,6 +93,7 @@ pub fn drag(
     mut tools: ResMut<ToolState>,
     mut placing: ResMut<Placing>,
     mut pad: ResMut<InkPad>,
+    mut tutor: ResMut<super::tutor::Tutor>,
 ) {
     let Mode::Place(shape) = tools.mode else {
         placing.from = None;
@@ -122,6 +130,24 @@ pub fn drag(
     }
 
     if mouse.just_released(MouseButton::Left) {
+        // The eraser acts on press-point alone: there is no size to drag out,
+        // and asking for one would make rubbing out a dot into a gesture.
+        if shape == Shape::Guide {
+            // One lesson, moved rather than multiplied.
+            let from = placing.from.unwrap_or(at);
+            placing.from = None;
+            tutor.at = from;
+            tutor.radius = tools.stamp_radius;
+            tutor.placed = true;
+            return;
+        }
+        if shape == Shape::Erase {
+            let from = placing.from.unwrap_or(at);
+            placing.from = None;
+            erase_at(&mut pad, from);
+            return;
+        }
+
         let Some((center, radius, facing)) = pending(&placing, &tools) else {
             return;
         };
@@ -186,3 +212,66 @@ const GHOST_IDLE: Color = Color::srgba(0.35, 0.45, 0.62, 0.40);
 const GHOST_LIVE: Color = Color::srgba(0.20, 0.40, 0.72, 0.85);
 /// The drag's own centre-to-cursor line.
 const GHOST_REACH: Color = Color::srgba(0.92, 0.58, 0.12, 0.70);
+
+/// Colour of a seal the panel is offering but has not placed.
+const GHOST: Color = Color::srgba(0.42, 0.34, 0.62, 0.60);
+
+/// Shows the seal `preset` would lay down, while the pointer is over its button.
+///
+/// A button whose whole job is "put a complicated drawing on the paper" is the
+/// one button you cannot guess the result of, and the hint line can only say
+/// its name. Drawing the actual strokes costs nothing — [`stamp::seal`] is the
+/// same function the button calls, so the preview cannot drift from the result.
+pub fn preset_preview(pointer: Res<Pointer>, tools: Res<ToolState>, mut gizmos: Gizmos) {
+    let Some(over) = pointer.over_tool else {
+        return;
+    };
+    // Both buttons, because `preset >` is the one you are on while *choosing*,
+    // and choosing without seeing is the thing this exists to fix.
+    let offered = super::bar::tool_named("preset") == Some(over)
+        || super::bar::tool_named("preset >") == Some(over);
+    if !offered {
+        return;
+    }
+
+    let Some((_, _, signs, open, inward)) = crate::sim::PRESETS.get(tools.preset) else {
+        return;
+    };
+    for stroke in stamp::seal(Vec2::ZERO, tools.stamp_radius, *signs, *open, *inward) {
+        for pair in stroke.windows(2) {
+            gizmos.line_2d(pair[0], pair[1], GHOST);
+        }
+    }
+}
+
+/// How near a click must land to count as touching a stroke.
+const RUB: f32 = 14.0;
+
+/// Rubs out the stroke nearest `at`, if anything is near enough.
+///
+/// Nearest rather than every stroke in range: erasing more than you pointed at
+/// is the thing that makes an eraser frightening to use.
+///
+/// The redo stack is dropped, because rubbing out is an edit and anything
+/// further forward in the history is now about ink that no longer exists —
+/// the same contract `stamp::place` follows.
+pub fn erase_at(pad: &mut InkPad, at: Vec2) {
+    let mut nearest: Option<(u32, f32)> = None;
+    for run in pad.points.chunk_by(|a, b| a.stroke_id == b.stroke_id) {
+        let Some(id) = run.first().map(|p| p.stroke_id) else {
+            continue;
+        };
+        let close = run
+            .iter()
+            .map(|p| at.distance(Vec2::new(p.x, p.y)))
+            .fold(f32::INFINITY, f32::min);
+        if close <= RUB && nearest.is_none_or(|(_, best)| close < best) {
+            nearest = Some((id, close));
+        }
+    }
+
+    if let Some((id, _)) = nearest {
+        pad.points.retain(|p| p.stroke_id != id);
+        pad.undone.clear();
+    }
+}

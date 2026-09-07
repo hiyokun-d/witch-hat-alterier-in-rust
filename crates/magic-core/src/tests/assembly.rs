@@ -3,6 +3,15 @@
 
 use super::*;
 
+/// The rules these fixtures judge a ring by.
+///
+/// The same numbers the shell ships, so a test agrees with the app about what
+/// counts as a ring — which is the whole point of the two being separate.
+const RULES_FOR_TESTS: crate::assembly::RingRules = crate::assembly::RingRules {
+    simple_tolerance: 0.08,
+    min_quality: 0.95,
+};
+
 use std::f32::consts::TAU;
 
 /// Points along an arc, inclusive of both ends, tagged with a stroke id.
@@ -580,7 +589,7 @@ fn a_figure_eight_is_malformed_whatever_else_it_is() {
 fn to_ring_carries_the_measurements_across() {
     let ink = ring(0, 40.0, -25.0, 130.0, 200);
     let rings = find_rings(&ink, &search());
-    let ring = rings[0].to_ring();
+    let ring = rings[0].to_ring(&RULES_FOR_TESTS);
 
     assert_eq!(ring.center(), rings[0].fit.center);
     assert_eq!(ring.radius(), rings[0].fit.radius);
@@ -593,7 +602,7 @@ fn to_ring_carries_the_measurements_across() {
 #[test]
 fn an_armed_candidate_still_compiles_to_a_ring() {
     let ink = arc(0, 0.0, 0.0, 120.0, 0.0, 300.0, 150);
-    let ring = find_rings(&ink, &search())[0].to_ring();
+    let ring = find_rings(&ink, &search())[0].to_ring(&RULES_FOR_TESTS);
     assert!(!ring.is_closed());
     assert!(ring.radius() > 100.0);
 }
@@ -607,7 +616,7 @@ fn the_compiled_ring_contains_what_assembly_said_it_held() {
 
     let rings = find_rings(&ink, &search());
     let held = rings[0].contents(&ink, 12.0);
-    let compiled = rings[0].to_ring();
+    let compiled = rings[0].to_ring(&RULES_FOR_TESTS);
 
     assert_eq!(held.inside, vec![1]);
     for p in ink.iter().filter(|p| held.inside.contains(&p.stroke_id)) {
@@ -766,7 +775,7 @@ fn glyphs_carry_the_nesting_the_geometry_shows() {
     let mut ink = ring(0, 0.0, 0.0, 200.0, 300);
     ink.extend(ring(1, 0.0, 0.0, 80.0, 200));
     let rings = find_rings(&ink, &search());
-    let built = glyphs(&rings, &ink, 12.0);
+    let built = glyphs(&rings, &ink, 12.0, &RULES_FOR_TESTS);
     assert_eq!(built.len(), 2);
     // Exactly one of them has a parent, and it is the other one.
     let children: Vec<&Glyph> = built.iter().filter(|g| g.parent.is_some()).collect();
@@ -779,7 +788,7 @@ fn a_glyph_names_nothing_until_the_runes_exist() {
     // Honest, not a placeholder: identifying ink is the recognizer's job and
     // `templates.ron` is empty, so every seal is rule 9's discharge for now.
     let ink = ring(0, 0.0, 0.0, 120.0, 200);
-    let built = glyphs(&find_rings(&ink, &search()), &ink, 12.0);
+    let built = glyphs(&find_rings(&ink, &search()), &ink, 12.0, &RULES_FOR_TESTS);
     assert_eq!(built[0].sigil, None);
     assert!(built[0].signs.is_empty());
 }
@@ -789,7 +798,10 @@ fn building_glyphs_is_deterministic() {
     let mut ink = ring(0, 0.0, 0.0, 200.0, 300);
     ink.extend(ring(1, 0.0, 0.0, 80.0, 200));
     let rings = find_rings(&ink, &search());
-    assert_eq!(glyphs(&rings, &ink, 12.0), glyphs(&rings, &ink, 12.0));
+    assert_eq!(
+        glyphs(&rings, &ink, 12.0, &RULES_FOR_TESTS),
+        glyphs(&rings, &ink, 12.0, &RULES_FOR_TESTS)
+    );
 }
 
 #[test]
@@ -802,6 +814,6 @@ fn a_glyph_counts_the_marks_it_cannot_name() {
         y: 0.0,
         stroke_id: 1,
     }));
-    let built = glyphs(&find_rings(&ink, &search()), &ink, 12.0);
+    let built = glyphs(&find_rings(&ink, &search()), &ink, 12.0, &RULES_FOR_TESTS);
     assert_eq!(built[0].unnamed, 1);
 }

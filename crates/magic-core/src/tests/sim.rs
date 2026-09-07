@@ -110,21 +110,114 @@ fn only_a_sigil_that_can_create_ever_creates() {
 }
 
 #[test]
-fn running_a_world_forward_never_changes_its_mass() {
+fn a_world_stops_growing_once_its_spells_have_finished() {
+    // The old form of this asserted mass never grows after a cast at all, and
+    // channels made that false on purpose: a spell now keeps summoning for a
+    // while, which is the whole difference between a firework and a fountain.
+    //
+    // The invariant that survives is the one that matters — when nothing is
+    // running any more, nothing is being made any more.
     let mut sim = world();
     sim.cast(&spell_for(Some("aeriforms")), Vec2::ZERO);
-    let raised = sim.field.mass();
-    assert!(raised > 0.0);
 
-    // Far enough that everything has settled against a wall or expired.
+    // Long enough for every channel to have run out.
+    for _ in 0..600 {
+        sim.step();
+    }
+    assert!(sim.channels.is_empty(), "a channel never finished");
+
+    let settled = sim.field.mass();
     for _ in 0..120 {
         sim.step();
     }
-    let now = sim.field.mass();
     assert!(
-        now <= raised + 1e-3,
-        "mass grew from {raised} to {now} with nothing casting"
+        sim.field.mass() <= settled + 1e-3,
+        "mass grew from {settled} to {} with nothing casting",
+        sim.field.mass()
     );
+}
+
+#[test]
+fn a_spell_keeps_summoning_after_the_first_burst() {
+    let mut sim = world();
+    sim.cast(&spell_for(Some("aeriforms")), Vec2::ZERO);
+    let first = sim.field.mass();
+    assert!(first > 0.0);
+    assert!(!sim.channels.is_empty(), "nothing was left running");
+
+    for _ in 0..30 {
+        sim.step();
+    }
+    assert!(
+        sim.field.mass() > first,
+        "the spell stopped at its first burst: {first} then {}",
+        sim.field.mass()
+    );
+}
+
+#[test]
+fn casting_the_same_seal_again_refreshes_rather_than_stacks() {
+    // Otherwise a held button is an ocean.
+    let mut sim = world();
+    let spell = spell_for(Some("aeriforms"));
+    for _ in 0..8 {
+        sim.cast(&spell, Vec2::ZERO);
+    }
+    assert_eq!(sim.channels.len(), 1);
+}
+
+#[test]
+fn a_neater_ring_summons_for_longer() {
+    // Canon rule 8: "neatly drawn seals are more stable and long-lasting than
+    // messy ones" — and that is a continuous claim, not a pass/fail one.
+    let rules = crate::sim::CastRules::default();
+    let neat = spell_for(Some("aeriforms"));
+
+    let mut rough_glyph = Glyph::new(
+        GlyphId(0),
+        Some(SigilId::from("aeriforms")),
+        Ring::new(
+            Point {
+                x: 0.0,
+                y: 0.0,
+                stroke_id: 0,
+            },
+            100.0,
+            true,
+            0.10,
+        ),
+    );
+    rough_glyph.sigil_extent = 50.0;
+    let rough = compile(&rough_glyph, &catalog(), &CompileRules::default());
+
+    assert!(
+        crate::sim::cast::channel_for(&rough, &rules)
+            < crate::sim::cast::channel_for(&neat, &rules)
+    );
+}
+
+#[test]
+fn a_spell_that_cannot_fire_never_starts_a_channel() {
+    let mut sim = world();
+    let mut open = Glyph::new(
+        GlyphId(0),
+        Some(SigilId::from("aeriforms")),
+        Ring::new(
+            Point {
+                x: 0.0,
+                y: 0.0,
+                stroke_id: 0,
+            },
+            100.0,
+            false,
+            0.99,
+        ),
+    );
+    open.sigil_extent = 50.0;
+    let spell = compile(&open, &catalog(), &CompileRules::default());
+
+    sim.cast(&spell, Vec2::ZERO);
+    assert!(sim.channels.is_empty());
 }
 
 #[test]

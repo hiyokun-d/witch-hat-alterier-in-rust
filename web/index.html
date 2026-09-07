@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Magic Atelier</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<style>
+  /* The page is a desk. The canvas is the paper on it, and nothing else is
+     allowed on screen — every readout the app has, it draws itself. */
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #3a2e22;
+    font-family: Georgia, "Times New Roman", serif;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* A pen, not a pointer. Also stops the browser turning a drag into a
+       text selection or a scroll gesture, which on a touchscreen would make
+       the pad unusable. */
+    cursor: crosshair;
+    touch-action: none;
+    outline: none;
+  }
+  #loading {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    gap: 0.6rem;
+    text-align: center;
+    color: #e8dcc4;
+    letter-spacing: 0.02em;
+  }
+  #loading small { color: #a89c88; }
+</style>
+
+<div id="loading">
+  <div>Magic Atelier</div>
+  <small>drawing the paper&hellip;</small>
+</div>
+
+<script type="module">
+  // wasm-bindgen writes both of these into web/pkg. See `./web.sh`.
+  import init from "./pkg/canvas.js";
+
+  try {
+    await init();
+    document.getElementById("loading")?.remove();
+  } catch (error) {
+    // A wasm module that fails to start leaves a blank brown page and no
+    // explanation, which is the worst way to find out the build is stale.
+    const note = document.getElementById("loading");
+    if (note) {
+      note.innerHTML =
+        "<div>could not start</div><small>" + String(error) + "</small>";
+    }
+    throw error;
+  }
+</script>

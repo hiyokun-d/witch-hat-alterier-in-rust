@@ -15,5 +15,16 @@ bevy = { version = "0.19.0", default-features = false, features = [
 ] }
 magic-core = { version = "0.1.0", path = "../../crates/magic-core" }
 
+# The web build. wgpu will not pick a backend on wasm without being told, and
+# WebGL2 rather than WebGPU because it is what browsers actually have today —
+# WebGPU is still behind a flag in most of them.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "0.19.0", default-features = false, features = [
+    "2d",
+    "bevy_text",
+    "default_font",
+    "webgl2",
+] }
+
 [features]
 dev = ["bevy/dynamic_linking"]

@@ -96,6 +96,9 @@ pub enum Warning {
     UnknownSign(SignId),
     /// Rule 2: the circuit is open. Not a mistake.
     RingOpen,
+    /// The ink is not a ring: a triangle, a spiral, a figure-eight. Canon has
+    /// no spell without one, so there is no spell here.
+    NotARing,
     /// Rule 8: closed but drawn too roughly to hold, with the quality measured.
     RoughRing { quality: f32 },
     /// Rule 9: the ring is the whole spell, and it will explode.
@@ -146,6 +149,7 @@ impl core::fmt::Display for Warning {
             Warning::UnknownSigil(id) => write!(f, "unknown sigil '{}'", id.as_str()),
             Warning::UnknownSign(id) => write!(f, "unknown sign '{}'", id.as_str()),
             Warning::RingOpen => write!(f, "ring is open — armed, not fired"),
+            Warning::NotARing => write!(f, "not a ring - no spell without one"),
             Warning::RoughRing { quality } => write!(f, "ring too rough to hold ({quality:.2})"),
             Warning::BareRing => write!(f, "bare ring — this is an explosion"),
             Warning::NoDriver => write!(f, "no sigil and no substitute — signs shape a discharge"),
@@ -516,6 +520,16 @@ fn resolve_driver(glyph: &Glyph, catalog: &Catalog, warnings: &mut Vec<Warning>)
 /// how neatly a ring was drawn is not a question worth asking until it is
 /// closed, because an open ring is armed however roughly it was inked.
 fn fire(glyph: &Glyph, rules: &CompileRules, warnings: &mut Vec<Warning>) -> Firing {
+    // Asked first, and before closure, because "closed" and "neat" are
+    // meaningless questions about a triangle. `Activation` has asked in this
+    // order since M4.4 and the compiler did not ask at all — which is how a
+    // fire sigil drawn on its own, with no ring anywhere near it, came to fire
+    // as canon rule 9's explosion. Its triangle is a closed loop that fits a
+    // circle; it is not a ring, and canon has no spell without one.
+    if !glyph.ring.is_simple() {
+        warnings.push(Warning::NotARing);
+        return Firing::Inert;
+    }
     if !glyph.ring.is_closed() {
         warnings.push(Warning::RingOpen);
         return Firing::Inert;

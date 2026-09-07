@@ -30,7 +30,13 @@
 //   turbulence  px/s2 of deterministic swirl, scaled by how hot it is. Fire
 //               flickers, water does not
 //   friction    Solid and Granular only: how much a resting parcel is held
+//   stiffness   how hard it resists being crowded. A liquid is nearly
+//               incompressible, and without this water has no surface and no
+//               level - it just collapses into whichever cell is lowest
 //   glow        rendering only, 0..1. Core never reads it
+//   ignites_at  a PROP of this substance catches fire at this temperature.
+//               Absent means it does not burn, and the absence is load-bearing:
+//               it is what makes a stone plinth safe to stand a fire on
 //   note        why
 (
     version: 1,
@@ -77,43 +83,51 @@
         (
             id: "water",
             density: 1000.0, phase: Liquid,
-            drag: 1.1, cohesion: 7.0, turbulence: 0.0, friction: 0.0, glow: 0.0,
+            stiffness: 900.0, drag: 1.1, cohesion: 7.0, turbulence: 0.0, friction: 0.0, glow: 0.0,
             note: "High cohesion is the whole difference from a gas: parcels match their neighbours' flow, so water moves as a body and pools instead of dispersing.",
         ),
         (
             id: "ice",
             density: 917.0, phase: Solid,
-            drag: 0.5, cohesion: 1.2, turbulence: 0.0, friction: 0.85, glow: 0.0,
+            stiffness: 1400.0, drag: 0.5, cohesion: 1.2, turbulence: 0.0, friction: 0.85, glow: 0.0,
             note: "Lighter than water, which is why ice floats - and it falls through air like anything else.",
         ),
         (
             id: "crystal",
             density: 2500.0, phase: Solid,
-            drag: 0.4, cohesion: 1.0, turbulence: 0.0, friction: 0.9, glow: 0.35,
+            stiffness: 1600.0, drag: 0.4, cohesion: 1.0, turbulence: 0.0, friction: 0.9, glow: 0.35,
             note: "Crystalize's product. Canon does not say what decides crystal over ice, so neither do we.",
         ),
         (
             id: "stone",
             density: 2600.0, phase: Solid,
-            drag: 0.35, cohesion: 0.8, turbulence: 0.0, friction: 0.95, glow: 0.0,
+            stiffness: 1800.0, drag: 0.35, cohesion: 0.8, turbulence: 0.0, friction: 0.95, glow: 0.0,
             note: "Granite. Falls hard, lands, and stops.",
         ),
         (
             id: "sand",
             density: 1600.0, phase: Granular,
-            drag: 0.7, cohesion: 2.5, turbulence: 0.0, friction: 0.7, glow: 0.0,
+            stiffness: 700.0, drag: 0.7, cohesion: 2.5, turbulence: 0.0, friction: 0.7, glow: 0.0,
             note: "Between a solid and a liquid, which is what Granular is for: it piles, but it also flows.",
         ),
         (
             id: "soil",
             density: 1300.0, phase: Granular,
-            drag: 0.8, cohesion: 3.0, turbulence: 0.0, friction: 0.8, glow: 0.0,
+            stiffness: 600.0, drag: 0.8, cohesion: 3.0, turbulence: 0.0, friction: 0.8, glow: 0.0,
         ),
         (
             id: "wood",
             density: 700.0, phase: Solid,
-            drag: 0.6, cohesion: 1.0, turbulence: 0.0, friction: 0.8, glow: 0.0,
+            stiffness: 900.0, drag: 0.6, cohesion: 1.0, turbulence: 0.0, friction: 0.8, glow: 0.0,
+            ignites_at: 280.0,
             note: "Lighter than water, so it would float if we modelled a water surface. We do not, yet.",
+        ),
+        (
+            id: "cloth",
+            density: 300.0, phase: Solid,
+            stiffness: 500.0, drag: 0.9, cohesion: 1.0, turbulence: 0.0, friction: 0.6, glow: 0.0,
+            ignites_at: 180.0,
+            note: "Catches at barely more than a candle, and soaks water fast. The prop that shows how much wetness matters.",
         ),
         (
             id: "light",

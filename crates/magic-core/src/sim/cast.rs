@@ -47,6 +47,14 @@ pub struct CastRules {
     /// is a ratio with nothing on the other side of it until someone picks a
     /// reference, so this is the pick. **Ours.**
     pub reference_radius: f32,
+    /// Seconds an `Active` seal keeps *summoning*, per unit of strength.
+    ///
+    /// Not how long a parcel lasts — how long the spell goes on making them.
+    /// Canon points straight at this: long-duration water spells *collect*
+    /// rather than create, which is a statement about a spell that runs for a
+    /// while, and rule 8 has a neat seal "long-lasting". A spell that fires
+    /// once and stops is a firework, not a fountain.
+    pub channel_seconds: f32,
     /// Seconds an `Active` seal's parcels last, per unit of strength.
     pub life_active: f32,
     /// Seconds a `Fleeting` seal's last. Canon's word for a ring too rough to
@@ -74,6 +82,7 @@ impl Default for CastRules {
             max_parcels: 64,
             reach: 3.0,
             reference_radius: 140.0,
+            channel_seconds: 4.0,
             life_active: 6.0,
             life_fleeting: 0.6,
             blast: 400.0,
@@ -131,6 +140,23 @@ impl CastReport {
     }
 }
 
+/// How long a spell keeps summoning, in seconds.
+///
+/// Rule 8 twice over: a seal too rough to hold gets a fraction of the time, and
+/// within the seals that do hold, a neater one runs longer. Zero for anything
+/// that does not fire.
+pub fn channel_for(spell: &Spell, rules: &CastRules) -> f32 {
+    if !spell.fires() || spell.cancelled {
+        return 0.0;
+    }
+    let craft = spell.quality.clamp(0.1, 1.0);
+    let base = match spell.firing {
+        Firing::Fleeting => rules.channel_seconds * 0.2,
+        _ => rules.channel_seconds,
+    };
+    base * craft * spell.strength().clamp(0.1, 4.0)
+}
+
 /// Casts `spell` centred on `at`, into `field`.
 ///
 /// Total, like [`crate::compile`]: there is no error case. A spell that cannot
@@ -164,6 +190,11 @@ pub fn cast(spell: &Spell, at: Vec2, field: &mut Field, rules: &CastRules) -> Ca
     let count = (rules.base_parcels + rules.parcels_per_sign * spell.sign_count)
         .min(rules.max_parcels)
         .max(1);
+    // Canon rule 8's other claim: a larger seal is a stronger one. Kept apart
+    // from `intensity`, which is the sigil measured *against* its ring — a big
+    // seal with a small sigil is powerful and unfocused, a small one with a
+    // filling sigil is focused and weak, and both facts have to survive.
+    let bulk = (spell.scale / rules.reference_radius).clamp(0.2, 4.0);
     let wanted = strength * rules.mass_per_strength * count as f32 * bulk;
 
     let (available, found, created) = if demand.must_find {
@@ -192,12 +223,6 @@ pub fn cast(spell: &Spell, at: Vec2, field: &mut Field, rules: &CastRules) -> Ca
         _ => rules.life_active,
     } * strength.max(0.1)
         * spell.quality.clamp(0.1, 1.0);
-
-    // And the other rule 8 claim: a larger seal is a stronger one. Kept apart
-    // from `intensity`, which is the sigil measured *against* its ring — a big
-    // seal with a small sigil is powerful and unfocused, a small one with a
-    // filling sigil is focused and weak, and both facts have to survive.
-    let bulk = (spell.scale / rules.reference_radius).clamp(0.2, 4.0);
 
     let speed = strength * rules.speed_per_strength;
     let lean = spell.balance.lean();

@@ -176,13 +176,21 @@ impl RingCandidate {
     /// A [`Activation::Malformed`] candidate still converts. Refusing here
     /// would leave the caller with no way to say *why* something failed, and
     /// §4.7 has core reporting rather than deciding.
-    pub fn to_ring(&self) -> Ring {
-        Ring::new(
+    pub fn to_ring(&self, rules: &RingRules) -> Ring {
+        let ring = Ring::new(
             self.fit.center,
             self.fit.radius,
             self.closed,
             self.fit.quality(),
-        )
+        );
+        // The third signal, carried forward. `Activation` has asked this since
+        // M4.4 and `Ring` threw the answer away, so a shape that was never a
+        // ring compiled exactly like one that was.
+        if self.is_simple(rules.simple_tolerance) {
+            ring
+        } else {
+            ring.not_a_ring()
+        }
     }
 }
 
@@ -541,7 +549,12 @@ pub fn links(rings: &[RingCandidate], points: &[Point], tolerance: f32) -> Vec<(
 /// job and `templates.ron` is empty until the runes are traced. Every glyph
 /// built here therefore compiles to rule 9's discharge, which is the correct
 /// answer for a ring holding ink nobody can read — not a placeholder.
-pub fn glyphs(rings: &[RingCandidate], points: &[Point], tolerance: f32) -> Vec<Glyph> {
+pub fn glyphs(
+    rings: &[RingCandidate],
+    points: &[Point],
+    tolerance: f32,
+    rules: &RingRules,
+) -> Vec<Glyph> {
     let parents = nesting(rings);
     let joined = links(rings, points, tolerance);
 
@@ -549,7 +562,7 @@ pub fn glyphs(rings: &[RingCandidate], points: &[Point], tolerance: f32) -> Vec<
         .iter()
         .enumerate()
         .map(|(i, ring)| {
-            let mut glyph = Glyph::new(GlyphId(i as u32), None, ring.to_ring());
+            let mut glyph = Glyph::new(GlyphId(i as u32), None, ring.to_ring(rules));
             let held = ring.contents(points, tolerance);
             glyph.sigil_extent = held.extent;
             // Everything the ring holds, since nothing here can name any of it.
