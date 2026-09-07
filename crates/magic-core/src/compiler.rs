@@ -18,7 +18,7 @@
 //! discharge of energy, i.e. an explosion." A bare ring compiles to
 //! [`Driver::Discharge`], and nothing downstream may treat it as a no-op.
 
-use crate::arrangement::{Balance, RegionArrangement, Spin, Symmetry, balance, spin};
+use crate::arrangement::{Balance, Focus, RegionArrangement, Spin, Symmetry, balance, focus, spin};
 use crate::assembly::RingRules;
 use crate::catalog::{Capabilities, Catalog, SigilId, SignId};
 use crate::glyph::{Glyph, GlyphId};
@@ -307,6 +307,14 @@ pub struct Spell {
     pub demand: Option<Demand>,
     /// Where the spell will actually go (§2.4).
     pub balance: Balance,
+    /// Where its power gathers, from where every steering sign *aims*.
+    ///
+    /// The companion to `balance`, and not derivable from it: four arrows
+    /// pointing at the middle sum to zero drift, so `balance` correctly reports
+    /// a spell that goes nowhere and cannot say that all four are pushing at
+    /// one point. That is the whole difference between a water orb and a
+    /// fountain.
+    pub focus: Focus,
     /// What its tilt buys and costs (§2.4).
     pub spin: Spin,
     /// Where it manifests, from every region sign together (§2.3).
@@ -439,6 +447,10 @@ pub fn compile(glyph: &Glyph, catalog: &Catalog, rules: &CompileRules) -> Spell 
     let spin = spin(&glyph.signs, directional);
     let symmetry = glyph.symmetry(rules.symmetry_tolerance);
     let region = region(glyph, catalog, rules);
+    // Where the signs *aim*, as against which way they push. Four arrows at the
+    // middle cancel to zero drift — `balance` is right that the spell goes
+    // nowhere, and silent about the thing that makes a water orb an orb.
+    let focus = focus(&glyph.signs, radius, directional);
 
     if !balance.is_balanced(rules.balance_tolerance) {
         warnings.push(Warning::Unbalanced {
@@ -466,6 +478,7 @@ pub fn compile(glyph: &Glyph, catalog: &Catalog, rules: &CompileRules) -> Spell 
         embedding,
         balance,
         spin,
+        focus,
         region,
         symmetry,
         effective,

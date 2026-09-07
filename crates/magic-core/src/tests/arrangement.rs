@@ -562,7 +562,9 @@ fn a_longer_arrow_drags_the_focus_toward_what_it_aims_at() {
     // whole spell. The same claim, read as a *place* rather than a direction.
     let mut signs = four(PI, 1.0);
     // Turn the eastern arrow so it aims north of the centre, and make it heavy.
-    signs[0].orientation = PI + 0.4;
+    // `PI - 0.4` rather than `PI + 0.4`: the arrow sits due east and points back
+    // west, so subtracting swings its aim upward and adding swings it down.
+    signs[0].orientation = PI - 0.4;
     signs[0].size = 6.0;
 
     let found = focus(&signs, 100.0, steers);
@@ -588,10 +590,7 @@ fn a_focus_off_the_centre_is_reported_where_it_actually_is() {
     // Two arrows crossing north of the middle. Nothing here is symmetric, so a
     // "focus is always the centre" bug would pass every test above and fail
     // this one.
-    let signs = vec![
-        aimed(0.0, PI - FRAC_PI_4, 1.0),
-        aimed(PI, FRAC_PI_4, 1.0),
-    ];
+    let signs = vec![aimed(0.0, PI - FRAC_PI_4, 1.0), aimed(PI, FRAC_PI_4, 1.0)];
     let found = focus(&signs, 100.0, steers);
     assert_eq!(found.convergence, Convergence::Converging);
     assert!(found.at.0.abs() < 0.01, "should sit on the vertical axis");

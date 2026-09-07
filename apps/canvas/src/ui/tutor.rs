@@ -61,8 +61,7 @@ impl Step {
     /// Names the actual mark where there is one. "Draw the sigil" is an
     /// instruction you cannot follow; "draw WATER" is one you can, and the
     /// ghost beside it shows the shape.
-    pub fn asks(self, lesson: &str, signs: usize) -> String {
-        let sigil = sigil_of(lesson);
+    pub fn asks(self, lesson: &str, sigil: Option<&str>, signs: usize) -> String {
         let keystone = sign_of(lesson);
         match self {
             Step::Ring => "1  the ring: one loop, all the way round. The activator".to_string(),
@@ -92,25 +91,13 @@ impl Step {
     }
 }
 
-/// What each teachable seal is made of, for the ghost and for the wording.
+/// What each teachable seal's keystone is, for the ghost and for the wording.
 ///
 /// A small table rather than a read of `spells.ron`, because the guide can only
-/// draw shapes core actually has — and a lesson that ghosts a mark nobody can
-/// draw is a lesson nobody can finish. When a rune is traced it wins here too:
-/// `glyph_mark` reads the same `shapes::built_in` the recognizer does.
-const FIXTURE_SIGILS: &[(&str, &str)] = &[
-    ("flamespout", "fire"),
-    ("fire_shot", "fire"),
-    ("watershot_seal", "water"),
-    ("water_orb", "water"),
-    ("raincleaver", "water"),
-    ("mistveil", "water"),
-    ("windrider", "wind"),
-    ("wind_gust", "wind"),
-    ("earth_wall", "earth"),
-    ("lightfall", "light"),
-];
-
+/// ghost a shape the app actually has. The *sigil* used to have a twin of this
+/// table and does not need one any more — `Preset::sigil` carries it, so the
+/// button that stamps a seal and the guide that teaches it cannot name
+/// different runes.
 const FIXTURE_SIGNS: &[(&str, &str)] = &[
     ("flamespout", "column"),
     ("watershot_seal", "column"),
@@ -120,14 +107,6 @@ const FIXTURE_SIGNS: &[(&str, &str)] = &[
     ("lightfall", "levitation"),
     ("earth_wall", "convergence"),
 ];
-
-/// The sigil a fixture calls for, if core has a shape for it.
-fn sigil_of(fixture: &str) -> Option<&'static str> {
-    FIXTURE_SIGILS
-        .iter()
-        .find(|(f, _)| *f == fixture)
-        .map(|(_, sigil)| *sigil)
-}
 
 /// The keystone a fixture calls for, if core has a shape for it.
 fn sign_of(fixture: &str) -> Option<&'static str> {
@@ -169,7 +148,7 @@ pub fn follow(reading: Res<Reading>, tools: Res<ToolState>, mut tutor: ResMut<Tu
         tutor.radius = tools.stamp_radius;
     }
 
-    let Some((_, _, signs, open, _)) = crate::sim::PRESETS.get(tools.preset).copied() else {
+    let Some(preset) = crate::sim::PRESETS.get(tools.preset).copied() else {
         return;
     };
 
@@ -205,9 +184,9 @@ pub fn follow(reading: Res<Reading>, tools: Res<ToolState>, mut tutor: ResMut<Tu
 
     tutor.step = if held == 0 {
         Step::Centre
-    } else if held < signs + 1 {
+    } else if held < preset.signs + 1 {
         Step::Keystones
-    } else if open && !ring.closed {
+    } else if preset.open && !ring.closed {
         Step::Close
     } else {
         Step::Done
@@ -215,11 +194,16 @@ pub fn follow(reading: Res<Reading>, tools: Res<ToolState>, mut tutor: ResMut<Tu
 }
 
 /// Draws the step you are on, and faintly what you have already done.
-pub fn show(tools: Res<ToolState>, tutor: Res<Tutor>, mut gizmos: Gizmos) {
+pub fn show(
+    tools: Res<ToolState>,
+    tutor: Res<Tutor>,
+    reading: Res<crate::reading::Reading>,
+    mut gizmos: Gizmos,
+) {
     if !tutor.placed {
         return;
     }
-    let Some((_, _, signs, open, inward)) = crate::sim::PRESETS.get(tools.preset).copied() else {
+    let Some(preset) = crate::sim::PRESETS.get(tools.preset).copied() else {
         return;
     };
 
@@ -230,24 +214,18 @@ pub fn show(tools: Res<ToolState>, tutor: Res<Tutor>, mut gizmos: Gizmos) {
     let at = tutor.at;
     let radius = tutor.radius;
 
-    let ring = if open {
+    let ring = if preset.open {
         stamp::arc(at, radius, 34.0, std::f32::consts::FRAC_PI_2)
     } else {
         stamp::ring(at, radius)
     };
-    let centre = {
-        let mut marks = stamp::cross(at, radius * 0.26);
-        marks.extend(stamp::triangle(
-            at,
-            radius * 0.17,
-            std::f32::consts::FRAC_PI_2,
-        ));
-        marks
-    };
-    let keystones: Vec<Vec<Vec2>> = (0..signs)
+    // The rune itself, not a stand-in. A guide whose centre is a cross teaches
+    // you to draw a cross.
+    let centre = stamp::glyph_mark(&reading.shapes, preset.sigil, at, radius * 0.25);
+    let keystones: Vec<Vec<Vec2>> = (0..preset.signs)
         .flat_map(|slot| {
-            let around = std::f32::consts::TAU * slot as f32 / signs.max(1) as f32;
-            let aim = if inward {
+            let around = std::f32::consts::TAU * slot as f32 / preset.signs.max(1) as f32;
+            let aim = if preset.inward {
                 around + std::f32::consts::PI
             } else {
                 around

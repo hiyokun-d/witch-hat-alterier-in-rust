@@ -69,8 +69,7 @@ pub fn search() -> assembly::RingSearch {
 struct Stamp {
     points: usize,
     stroke_id: u32,
-    sigil: Option<usize>,
-    fixture: Option<usize>,
+    only_traced: bool,
 }
 
 /// The pad, read: its rings, the glyphs they make, and what those compile to.
@@ -90,10 +89,28 @@ pub struct Reading {
     /// invisible: knowing the app read your fire sigil correctly is exactly
     /// what you want *before* committing to a ring around it.
     pub loose: Vec<(magic_core::Vec2, String)>,
-    /// The shapes the recognizer matches against: whatever `templates.ron`
-    /// holds, then the built-in reconstructions as a fallback.
+    /// The shapes the recognizer matches against — **the only such list in the
+    /// app**.
+    ///
+    /// There used to be two. `debug.rs` kept its own `Runes` resource holding
+    /// the shipped file plus the recorder's, and this one held those *plus* the
+    /// built-in reconstructions. Two lists, ranked separately, so the board and
+    /// the compiler were never scoring against the same vocabulary — the board
+    /// would call a drawing `earth` while the seal beneath it compiled to
+    /// something else, and neither was wrong about its own list. A readout that
+    /// does not describe the thing it sits next to is worse than no readout.
     pub shapes: Vec<Recorded>,
+    /// Where each shape came from, index-aligned with `shapes`: `recorded`,
+    /// `traced` or `built-in`. What the board prints in its source column, and
+    /// what `traced_only` filters on.
+    pub sources: Vec<&'static str>,
+    /// What happened to the recorder's file last time it was read. A count, or
+    /// why not.
+    pub note: String,
     stamp: Option<Stamp>,
+    /// Whether built-in sigils were left out last time the shapes were loaded.
+    /// Part of the stamp: changing the switch has to force a reload.
+    only_traced: bool,
     /// When the recorder's file was last seen. `None` means never looked,
     /// which is not the same as looked and found nothing.
     #[cfg(not(target_arch = "wasm32"))]
@@ -104,6 +121,34 @@ impl Reading {
     /// The spell for a ring, if there is one.
     pub fn spell(&self, slot: usize) -> Option<&Spell> {
         self.spells.get(slot)
+    }
+
+    /// Every shape and where it came from, for a readout.
+    pub fn catalogued(&self) -> impl Iterator<Item = (&'static str, &Recorded)> {
+        self.sources.iter().copied().zip(self.shapes.iter())
+    }
+
+    /// Whether a rune of this name was actually traced by hand.
+    ///
+    /// The question the cast gate asks. A built-in reconstruction is a stand-in
+    /// (§12) and casting one by accident is exactly what it should not allow.
+    pub fn is_traced(&self, name: &str) -> bool {
+        self.catalogued()
+            .any(|(source, rune)| source != "built-in" && rune.template.name == name)
+    }
+
+    /// The traced sigils, by name, in catalogue order and without repeats.
+    pub fn traced_sigils(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for (source, rune) in self.catalogued() {
+            if source == "built-in" || rune.kind != templates::Kind::Sigil {
+                continue;
+            }
+            if !out.iter().any(|had| had == &rune.template.name) {
+                out.push(rune.template.name.clone());
+            }
+        }
+        out
     }
 }
 
@@ -117,15 +162,14 @@ pub fn read_pad(
     let now = Stamp {
         points: pad.points.len(),
         stroke_id: pad.stroke_id,
-        sigil: tools.as_deref().and_then(|state| state.sigil),
-        fixture: tools.as_deref().and_then(|state| state.fixture),
+        only_traced: tools.as_deref().is_none_or(|state| state.only_traced),
     };
     if reading.stamp == Some(now) {
         return;
     }
     reading.stamp = Some(now);
 
-    load_shapes(&mut reading);
+    load_shapes(&mut reading, now.only_traced);
 
     reading.rings = assembly::find_rings(&pad.points, &search());
     reading.glyphs = assembly::glyphs(&reading.rings, &pad.points, ON_RING_TOLERANCE, &RULES);
@@ -154,12 +198,9 @@ pub fn read_pad(
     };
     reading.loose = loose_marks(&pad, &reading);
 
-    // The panel's override still wins where it is set — it is how a seal gets
-    // named as a spell fixture, and how anything the recognizer cannot read yet
-    // can still be tested. Where it is not set, the drawing speaks for itself.
-    if let Some(state) = tools.as_deref() {
-        crate::sim::apply_naming(&mut reading.glyphs, catalog, state);
-    }
+    // No override any more. The drawing speaks for itself, always — which it
+    // could not while `templates.ron` was empty, and can now that runes are
+    // traced. See `sim::refuses` for what happens to a seal nobody can read.
     reading.spells = magic_core::compile_all(&reading.glyphs, catalog, &CompileRules::default());
 }
 
@@ -221,40 +262,65 @@ fn loose_marks(pad: &InkPad, reading: &Reading) -> Vec<(magic_core::Vec2, String
 /// 3. `shapes::built_in` — the reconstructions, so the engine is reachable at
 ///    all before anybody has traced anything.
 ///
-/// `with_built_ins` skips a name already taken, so each source only fills gaps
-/// the ones before it left.
+/// Each source only fills gaps the ones before it left, so a traced rune always
+/// outranks the built-in of the same name (§12).
 ///
-/// **This was the bug.** Only the shipped file was read, and it is empty — so
-/// every rune a person traced went into `recorded-gesture.ron` and was seen by
-/// nothing but the recogniser board. A water sigil drawn perfectly still
-/// compiled to canon rule 9's discharge, because the thing that names ink had
-/// never been shown the shapes.
-fn load_shapes(reading: &mut Reading) {
+/// **`only_traced` drops the built-in *sigils*, and keeps the built-in signs.**
+/// The asymmetry is the point rather than a compromise. A sigil decides *what*
+/// the magic is, so a reconstruction being mistaken for one means casting fire
+/// when you drew nothing of the sort — and §12 is explicit that these shapes
+/// are stand-ins, reconstructions of a community project's reconstructions,
+/// which is not a thing to fire a spell on by accident. A sign decides what
+/// *shape* the magic takes, and a misread keystone gives you the wrong spout,
+/// not the wrong element. Keeping them is also what lets a seal be built at all
+/// before anybody has sat down to trace forty-four keystones.
+fn load_shapes(reading: &mut Reading, only_traced: bool) {
     let n = magic_core::stroke::MATCH_POINTS;
 
     #[cfg(not(target_arch = "wasm32"))]
-    let live = {
+    let (live, note) = {
         let now = std::fs::metadata(crate::ui::record::OUTFILE)
             .and_then(|meta| meta.modified())
             .ok();
-        if reading.traced == Some(now) && !reading.shapes.is_empty() {
+        let fresh = reading.traced != Some(now) || reading.only_traced != only_traced;
+        if !fresh && !reading.shapes.is_empty() {
             return;
         }
         reading.traced = Some(now);
-        std::fs::read_to_string(crate::ui::record::OUTFILE)
-            .ok()
-            .and_then(|source| templates::parse("recorded-gesture.ron", &source, n).ok())
-            .unwrap_or_default()
+        match std::fs::read_to_string(crate::ui::record::OUTFILE) {
+            Err(_) => (Vec::new(), "not written yet".to_string()),
+            Ok(source) => match templates::parse("recorded-gesture.ron", &source, n) {
+                Ok(found) => {
+                    let note = format!("{} sample(s)", found.len());
+                    (found, note)
+                }
+                // The message says what fixes it. A parser dump is true,
+                // unreadable, and not actionable.
+                Err(_) => (
+                    Vec::new(),
+                    "unreadable - press record to rewrite it".to_string(),
+                ),
+            },
+        }
     };
     #[cfg(target_arch = "wasm32")]
-    let live = {
-        if !reading.shapes.is_empty() {
+    let (live, note) = {
+        if !reading.shapes.is_empty() && reading.only_traced == only_traced {
             return;
         }
-        Vec::new()
+        (Vec::new(), "the browser has no files to watch".to_string())
+    };
+    reading.only_traced = only_traced;
+    reading.note = note;
+
+    let taken = |have: &[Recorded], rune: &Recorded| {
+        have.iter()
+            .any(|had| had.kind == rune.kind && had.template.name == rune.template.name)
     };
 
     let mut shapes = live;
+    let mut sources: Vec<&'static str> = vec!["recorded"; shapes.len()];
+
     let permanent = templates::parse(
         "templates.ron",
         include_str!("../../../crates/magic-core/the-magic-assets/templates.ron"),
@@ -262,13 +328,22 @@ fn load_shapes(reading: &mut Reading) {
     )
     .unwrap_or_default();
     for rune in permanent {
-        let taken = shapes
-            .iter()
-            .any(|have| have.kind == rune.kind && have.template.name == rune.template.name);
-        if !taken {
+        if !taken(&shapes, &rune) {
             shapes.push(rune);
+            sources.push("traced");
         }
     }
 
-    reading.shapes = templates::with_built_ins(shapes, n);
+    for rune in magic_core::templates::built_ins(n) {
+        if only_traced && rune.kind == templates::Kind::Sigil {
+            continue;
+        }
+        if !taken(&shapes, &rune) {
+            shapes.push(rune);
+            sources.push("built-in");
+        }
+    }
+
+    reading.shapes = shapes;
+    reading.sources = sources;
 }

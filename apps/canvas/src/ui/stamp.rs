@@ -13,6 +13,8 @@
 use bevy::prelude::*;
 use std::f32::consts::TAU;
 
+use magic_core::templates::{Kind, Recorded};
+
 use super::Shape;
 use crate::{InkPad, Point};
 
@@ -33,6 +35,7 @@ const SAMPLES_PER_ARM: usize = 24;
 /// that have no direction.
 pub fn draw_shape(
     shape: Shape,
+    shapes: &[Recorded],
     center: Vec2,
     radius: f32,
     facing: f32,
@@ -43,11 +46,8 @@ pub fn draw_shape(
         Shape::Arc => arc(center, radius, gap_degrees, facing),
         // Sized against the ring it is meant to sit inside, so it lands as
         // contents rather than as another ring.
-        Shape::Cross => cross(center, radius * 0.45),
         Shape::Sign => sign(center, radius * 0.45, facing),
         Shape::Glaive => glaive(center, radius * 0.35, facing),
-        Shape::Bar => bar(center, radius * 0.45, facing),
-        Shape::Triangle => triangle(center, radius * 0.35, facing),
         Shape::Spiral => spiral(center, radius * 0.40),
         // A link is drawn from where you pressed to where you let go, not out
         // from a centre — it joins two rings (canon rule 5), so both ends
@@ -55,7 +55,7 @@ pub fn draw_shape(
         Shape::Link => link(center, radius, facing),
         // A sigil or a sign from core's own shapes, sized by the drag like
         // everything else on the panel.
-        Shape::Mark(which) => glyph_mark(which, center, radius * 0.30),
+        Shape::Mark(which) => glyph_mark(shapes, which, center, radius * 0.30),
         // The guide places no ink: it moves where the lesson is drawn. Handled
         // in `place::drag` before it reaches here.
         Shape::Guide => Vec::new(),
@@ -125,27 +125,6 @@ pub fn arc(center: Vec2, radius: f32, gap_degrees: f32, facing: f32) -> Vec<Vec<
         .collect();
     vec![stroke]
 }
-
-/// Two crossed strokes, standing in for a sigil until real runes are traced.
-///
-/// Deliberately not claiming to be any canon sigil — `templates.ron` is empty
-/// and inventing a fire glyph here would be exactly the thing §2 forbids. This
-/// is ink of a known shape to put *inside* a ring, so that
-/// `RingCandidate::contents` has something to sort and the intensity ratio has
-/// something to measure.
-pub fn cross(center: Vec2, reach: f32) -> Vec<Vec<Vec2>> {
-    let arm = |from: Vec2, to: Vec2| -> Vec<Vec2> {
-        (0..SAMPLES_PER_ARM)
-            .map(|i| from.lerp(to, i as f32 / (SAMPLES_PER_ARM - 1) as f32))
-            .collect()
-    };
-
-    vec![
-        arm(center - Vec2::X * reach, center + Vec2::X * reach),
-        arm(center - Vec2::Y * reach, center + Vec2::Y * reach),
-    ]
-}
-
 /// One keystone: a shaft with a head, pointing along `facing`.
 ///
 /// Not any named sign — `templates.ron` is empty and inventing a column glyph
@@ -202,40 +181,6 @@ pub fn glaive(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
     };
     vec![talon(-0.45), talon(0.0), talon(0.45)]
 }
-
-/// A straight keystone: length is power, direction is aim (§2.4).
-///
-/// The plainest sign there is, and the one to reach for when what is being
-/// tested is *balance* rather than shape — four equal bars sum to zero drift,
-/// and lengthening one steers the whole seal.
-pub fn bar(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
-    let along = Vec2::from_angle(facing);
-    let steps = 12;
-    vec![
-        (0..=steps)
-            .map(|i| {
-                let t = i as f32 / steps as f32 * 2.0 - 1.0;
-                center + along * (reach * t)
-            })
-            .collect(),
-    ]
-}
-
-/// A three-sided mark.
-///
-/// Canon notes whorling wind is three-sided and wonders whether that hints at
-/// a fire connection - heating the air the way a hot-air balloon does. This is
-/// a stand-in for that shape, not a claim to be it.
-pub fn triangle(center: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
-    let corner = |k: usize| {
-        let angle = facing + std::f32::consts::TAU * k as f32 / 3.0;
-        center + Vec2::from_angle(angle) * reach
-    };
-    // One closed stroke. The fitter will not mistake it for a ring: three
-    // corners put the circle fit's rms well past `min_roundness`.
-    vec![vec![corner(0), corner(1), corner(2), corner(0)]]
-}
-
 /// A spiral - ink that turns more than once.
 ///
 /// Deliberately something the ring search must *reject*: it covers one turn of
@@ -287,7 +232,15 @@ pub fn link(from: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
 /// A triangle inside a cross rather than a small ring: a ring in the middle
 /// would be found by the ring search and read as canon rule 4's nesting, which
 /// would change what the seal compiles to. A three-sided mark cannot.
-pub fn seal(center: Vec2, radius: f32, signs: usize, open: bool, inward: bool) -> Vec<Vec<Vec2>> {
+pub fn seal(
+    shapes: &[Recorded],
+    sigil: &str,
+    center: Vec2,
+    radius: f32,
+    signs: usize,
+    open: bool,
+    inward: bool,
+) -> Vec<Vec<Vec2>> {
     // An open seal is canon rule 2's prepared spell: everything drawn, waiting
     // on its last stroke. The gap faces up, where it is easiest to see and to
     // close by hand.
@@ -296,8 +249,19 @@ pub fn seal(center: Vec2, radius: f32, signs: usize, open: bool, inward: bool) -
     } else {
         ring(center, radius)
     };
-    strokes.extend(cross(center, radius * 0.26));
-    strokes.extend(triangle(center, radius * 0.17, std::f32::consts::FRAC_PI_2));
+    // **The seal's own sigil, not a stand-in.** This used to be a cross with a
+    // triangle in it — a mark nobody could read, which is why the preset had to
+    // force its own name to compile to anything. Drawing the rune the
+    // recogniser knows means a stamped seal names itself exactly the way a
+    // hand-drawn one does, and there is no override left to get wrong.
+    // **A quarter of the ring, and the number is load-bearing.** The keystones
+    // sit at `0.62` of the radius and are `0.22` long, so their inner ends
+    // reach in to `0.51`. A sigil drawn any larger than about `0.3` touches
+    // them, and `naming` segments on the gaps between strokes — so an oversized
+    // sigil merges with a keystone, the blob reads as nothing, and the seal is
+    // refused. A preset that stamps a spell it cannot then read is the exact
+    // failure this whole path exists to remove.
+    strokes.extend(glyph_mark(shapes, sigil, center, radius * 0.25));
 
     for slot in 0..signs.max(1) {
         let around = std::f32::consts::TAU * slot as f32 / signs.max(1) as f32;
@@ -317,13 +281,71 @@ pub fn seal(center: Vec2, radius: f32, signs: usize, open: bool, inward: bool) -
     strokes
 }
 
-/// One of core's built-in marks, placed and scaled.
+/// One recorded rune, un-normalised back onto the pad.
 ///
-/// The shapes live in `magic_core::shapes` rather than here, because what a
-/// fire sigil looks like now decides what a drawing *means* — the recognizer
-/// matches against those same points. The shell draws them; it does not get to
-/// define them (§4.2).
-pub fn glyph_mark(which: &str, center: Vec2, reach: f32) -> Vec<Vec<Vec2>> {
+/// `Cloud` divides out position and scale and keeps both, so putting a rune
+/// back is the same arithmetic run backwards. `stroke_id` survives
+/// normalisation untouched, which is what lets a four-stroke sigil come back as
+/// four strokes rather than as one scribble — and that matters, because
+/// `naming` segments on the gaps between strokes.
+///
+/// `reach` is the **furthest** point from the centre, not the RMS distance the
+/// recognizer divided out. The caller is placing a mark inside a ring and needs
+/// to know it will fit; RMS is a fact about the shape and says nothing about
+/// where its tips land. Runes vary a lot here — a diamond in a square reaches
+/// much further past its RMS than three teardrops do — so converting once, per
+/// rune, is the only way `seal` can promise a gap between the sigil and the
+/// keystones around it.
+pub fn rune(
+    shapes: &[Recorded],
+    kind: Kind,
+    name: &str,
+    center: Vec2,
+    reach: f32,
+) -> Option<Vec<Vec<Vec2>>> {
+    let found = shapes
+        .iter()
+        .find(|rune| rune.kind == kind && rune.template.name == name)?;
+
+    let points = &found.template.cloud.points;
+    let furthest = points
+        .iter()
+        .map(|p| (p.x * p.x + p.y * p.y).sqrt())
+        .fold(0.0f32, f32::max);
+    if furthest <= f32::EPSILON {
+        return None;
+    }
+    let scale = reach / furthest;
+
+    let mut strokes: Vec<Vec<Vec2>> = Vec::new();
+    for run in points.chunk_by(|a, b| a.stroke_id == b.stroke_id) {
+        strokes.push(
+            run.iter()
+                .map(|p| center + Vec2::new(p.x, p.y) * scale)
+                .collect(),
+        );
+    }
+    (!strokes.is_empty()).then_some(strokes)
+}
+
+/// A mark, placed and scaled — **the one you would actually be recognised as**.
+///
+/// Traced first, and that is the whole change. It used to draw
+/// `magic_core::shapes::built_in` always, which meant the button that stamps a
+/// fire sigil drew a *reconstruction* while the recogniser had your own traced
+/// fire in front of it. The two are not the same drawing, so the app was
+/// stamping something it could not read — and the preset covered for that by
+/// forcing the name, which is exactly the accidental cast that has to stop.
+///
+/// Falls back to the built-in geometry for anything untraced, so the keystones
+/// still work before anybody has sat down to trace forty-four of them (§12).
+pub fn glyph_mark(shapes: &[Recorded], which: &str, center: Vec2, reach: f32) -> Vec<Vec<Vec2>> {
+    if let Some(traced) = rune(shapes, Kind::Sigil, which, center, reach) {
+        return traced;
+    }
+    if let Some(traced) = rune(shapes, Kind::Sign, which, center, reach) {
+        return traced;
+    }
     magic_core::shapes::built_in()
         .into_iter()
         .find(|(id, _, _)| *id == which)

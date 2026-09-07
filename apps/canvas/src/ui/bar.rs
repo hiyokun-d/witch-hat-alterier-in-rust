@@ -376,6 +376,9 @@ pub struct Controls<'w> {
     shape: ResMut<'w, PaperShape>,
     last: ResMut<'w, super::record::LastRecording>,
     world: ResMut<'w, crate::sim::Simulation>,
+    /// What the pad currently reads as, and which runes are traced. `preset`
+    /// needs both: it draws the traced rune, and refuses when there is none.
+    reading: Res<'w, crate::reading::Reading>,
 }
 
 /// Turns a press into a tool.
@@ -411,9 +414,12 @@ pub fn click(
                 &mut controls.tools,
                 &mut controls.pad,
                 &mut controls.shape,
-                &window,
                 &mut controls.last,
                 &mut controls.world,
+                &super::Bench {
+                    window: &window,
+                    reading: &controls.reading,
+                },
             ),
         },
         _ => {}
@@ -498,15 +504,29 @@ pub fn layout(
 }
 
 /// Colours each button by what it is doing, and says what the pointer is over.
+/// What the panel reads to decide what to say. A bundle for the same reason
+/// [`super::Bench`] is one: a run of positional resources is a run nobody reads.
+#[derive(SystemParam)]
+pub struct Readouts<'w> {
+    tools: Res<'w, ToolState>,
+    last: Res<'w, super::record::LastRecording>,
+    tutor: Res<'w, super::tutor::Tutor>,
+    world: Res<'w, crate::sim::Simulation>,
+}
+
 pub fn draw(
     window: Single<&Window>,
     pointer: Res<Pointer>,
-    tools: Res<ToolState>,
-    last: Res<super::record::LastRecording>,
-    tutor: Res<super::tutor::Tutor>,
+    said: Readouts,
     mut fills: Query<(&Slot, &mut Sprite)>,
     mut texts: Query<(&Slot, &mut Text2d, &mut TextColor)>,
 ) {
+    let Readouts {
+        tools,
+        last,
+        tutor,
+        world,
+    } = said;
     let hovered = pointer.at.and_then(|at| hit(at, &window, &tools));
 
     for (slot, mut sprite) in &mut fills {
@@ -531,15 +551,25 @@ pub fn draw(
             if Some(index) == tool_named("preset") || Some(index) == tool_named("preset >") =>
         {
             match crate::sim::PRESETS.get(tools.preset) {
-                Some((id, what, signs, open, aimed)) => format!(
-                    "{id}  ({}/{})  {what}  |  {signs} keystone(s) aimed {}, ring {}",
+                Some(preset) => format!(
+                    "{}  ({}/{})  {}  |  {} keystone(s) aimed {}, ring {}  |  {}",
+                    preset.id,
                     tools.preset + 1,
                     crate::sim::PRESETS.len(),
-                    if *aimed { "IN" } else { "out" },
-                    if *open {
+                    preset.blurb,
+                    preset.signs,
+                    if preset.inward { "IN" } else { "out" },
+                    if preset.open {
                         "OPEN - you close it"
                     } else {
                         "closed"
+                    },
+                    // The fixture's own effect line, straight from
+                    // `spells.ron`. The preset's blurb says how it is built;
+                    // this says what it does.
+                    match world.lore.as_ref() {
+                        Some(catalog) => crate::sim::describe_fixture(catalog, preset.id),
+                        None => "catalogue failed to load".to_string(),
                     },
                 ),
                 None => TOOLS[index].hint.to_string(),
@@ -566,10 +596,18 @@ pub fn draw(
     // pressing is noise on top of an instruction.
     let hint = match (tutor.placed, last.0.as_deref()) {
         (true, _) => {
-            let (lesson, signs) = crate::sim::PRESETS
-                .get(tools.lesson)
-                .map_or(("", 0), |(id, _, signs, _, _)| (*id, *signs));
-            format!("guide: {lesson}\n{}", tutor.step.asks(lesson, signs))
+            // The guide teaches whatever `preset >` has chosen. It used to
+            // have a second selector of its own, which meant two lists to keep
+            // in step and one more button to find.
+            let (lesson, sigil, signs) = crate::sim::PRESETS
+                .get(tools.preset)
+                .map_or(("", "", 0), |preset| {
+                    (preset.id, preset.sigil, preset.signs)
+                });
+            format!(
+                "guide: {lesson}\n{}",
+                tutor.step.asks(lesson, Some(sigil), signs)
+            )
         }
         (false, Some(said)) => format!("{doing}\n{said}"),
         (false, None) => doing,

@@ -120,8 +120,10 @@ fn a_world_stops_growing_once_its_spells_have_finished() {
     let mut sim = world();
     sim.cast(&spell_for(Some("aeriforms")), Vec2::ZERO);
 
-    // Long enough for every channel to have run out.
-    for _ in 0..600 {
+    // Long enough for every channel to have run out. `CastRules::channel_bounds`
+    // puts a floor of fifteen simulated seconds under any seal that fires, so
+    // "long enough" is now the better part of a minute rather than ten seconds.
+    for _ in 0..3600 {
         sim.step();
     }
     assert!(sim.channels.is_empty(), "a channel never finished");

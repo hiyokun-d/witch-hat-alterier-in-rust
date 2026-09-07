@@ -365,3 +365,135 @@ fn walk(a: &[Point], b: &[Point], start: usize, matched: &mut [bool], ceiling: f
 #[cfg(test)]
 #[path = "tests/recognizer.rs"]
 mod tests;
+
+/// The direction a cloud is longest in, in radians, `0..π`.
+///
+/// The first eigenvector of the point covariance — the axis of greatest spread.
+/// Order-invariant (it is a sum), scale-invariant (the cloud is normalised
+/// already), and defined up to 180 degrees, which is exactly the ambiguity
+/// canon rule 6 is *about*: a sign and its reversed twin lie on the same axis
+/// and mean opposite things.
+///
+/// Returns `None` for a cloud with no direction at all — a ring, a dot, a
+/// perfectly radial mark. That is a real answer and not a failure: such a mark
+/// has no front to point, which §2.3 says outright of the non-directional
+/// signs, and rotating it would be inventing an orientation it does not have.
+pub fn principal_axis(cloud: &Cloud) -> Option<f32> {
+    let (mut xx, mut xy, mut yy) = (0.0f32, 0.0f32, 0.0f32);
+    for point in &cloud.points {
+        xx += point.x * point.x;
+        xy += point.x * point.y;
+        yy += point.y * point.y;
+    }
+    // How far from circular the spread is. Below this the axis is noise, and a
+    // noisy axis would spin a radial mark to a different angle every frame.
+    let spread = ((xx - yy) * (xx - yy) + 4.0 * xy * xy).sqrt();
+    let total = xx + yy;
+    if total <= f32::EPSILON || spread / total < 0.05 {
+        return None;
+    }
+    // Eigenvector of the larger eigenvalue, as an angle. The factor of two is
+    // the usual one for an axis rather than a direction.
+    Some(0.5 * (2.0 * xy).atan2(xx - yy))
+}
+
+/// The same cloud, turned about its centroid.
+///
+/// The centroid is already the origin after [`normalize`], so this is a plain
+/// rotation and `scale` and `origin` ride through untouched — they describe
+/// what was divided out, and turning a drawing changes neither.
+pub fn turned(cloud: &Cloud, by: f32) -> Cloud {
+    let (sin, cos) = by.sin_cos();
+    Cloud {
+        points: cloud
+            .points
+            .iter()
+            .map(|point| Point {
+                x: point.x * cos - point.y * sin,
+                y: point.x * sin + point.y * cos,
+                stroke_id: point.stroke_id,
+            })
+            .collect(),
+        scale: cloud.scale,
+        origin: cloud.origin,
+    }
+}
+
+/// One template's best score against a gesture, and how far the gesture had to
+/// be turned to get it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Aligned {
+    pub index: usize,
+    pub distance: f32,
+    /// Radians the *gesture* was turned by to meet the template. Negate it and
+    /// you have how far the drawn mark sits from the template's own angle,
+    /// which is what a sign's tilt is measured from (§2.4).
+    pub turn: f32,
+}
+
+/// Ranks templates against a gesture, allowing the gesture to be turned.
+///
+/// # Why this exists, and why it is not the default
+///
+/// [`rank`] deliberately keeps rotation, because §2.2 says a sigil's *shape*
+/// is what names it and canon rule 6 makes a reversed mark mean the opposite of
+/// an upright one. For a **sigil** that is right and stays right.
+///
+/// For a **sign** it is unworkable, and the water orb is the proof: four
+/// keystones arranged around a ring point in four different directions, so at
+/// most one of them can ever sit at the template's own angle. Canon is explicit
+/// that this is the normal way to draw a seal — §2.4's whole balance mechanic
+/// is about signs at different angles — so a recogniser that cannot read a
+/// turned keystone cannot read any real seal.
+///
+/// So the gesture is aligned to each template by its principal axis before
+/// scoring, and **both ways round**, because an axis is defined up to 180
+/// degrees and that ambiguity is precisely canon rule 6: a sign and its
+/// reversed twin lie on the same axis and do opposite things. The winner
+/// reports the turn it needed, so which of the two it was is an answer rather
+/// than a coin toss.
+///
+/// Costs two distance computations per template instead of one. It does *not*
+/// sweep angles — that would be twenty-odd times the work for an answer the
+/// covariance already gives exactly.
+pub fn rank_aligned(cloud: &Cloud, templates: &[Template]) -> Vec<Aligned> {
+    let n = cloud.points.len();
+    let mine = principal_axis(cloud);
+
+    let mut found: Vec<Aligned> = templates
+        .iter()
+        .enumerate()
+        .filter(|(_, template)| template.cloud.points.len() == n && n > 0)
+        .filter_map(|(index, template)| {
+            // A mark with no axis cannot be aligned to anything, and neither
+            // can a template without one. Both fall back to the upright
+            // comparison, which is the honest answer for a radial mark.
+            let turn = match (mine, principal_axis(&template.cloud)) {
+                (Some(mine), Some(theirs)) => theirs - mine,
+                _ => 0.0,
+            };
+            let mut best: Option<(f32, f32)> = None;
+            for by in [turn, turn + std::f32::consts::PI] {
+                let moved = turned(cloud, by);
+                let mut matched = vec![false; n];
+                let distance = greedy(&moved.points, &template.cloud.points, &mut matched);
+                if best.is_none_or(|(had, _)| distance < had) {
+                    best = Some((distance, by));
+                }
+            }
+            let (distance, turn) = best?;
+            Some(Aligned {
+                index,
+                distance,
+                turn,
+            })
+        })
+        .collect();
+
+    found.sort_by(|a, b| {
+        a.distance
+            .total_cmp(&b.distance)
+            .then(a.index.cmp(&b.index))
+    });
+    found
+}

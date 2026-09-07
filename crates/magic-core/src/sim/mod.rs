@@ -267,10 +267,11 @@ fn announce(spell: &Spell, at: Vec2, report: &CastReport) -> Vec<Event> {
             substance: SubstanceId::new(substance.clone()),
         }],
         CastOutcome::Fired => {
-            let mass = report.created + report.found;
-            if mass <= 0.0 {
-                return Vec::new();
-            }
+            // No early return on zero mass. A spell that fired and raised
+            // nothing is a strange thing that a person watching should be able
+            // to *see* happen, and returning an empty list here made it look
+            // exactly like a cast that never occurred.
+            let mass = (report.created + report.found).max(0.0);
             let substance = spell
                 .demand
                 .as_ref()

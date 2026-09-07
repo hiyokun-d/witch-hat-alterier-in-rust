@@ -498,10 +498,12 @@ impl Focus {
     /// qualitative thing and gives no number, and the choice of the ring's own
     /// radius as the denominator is what makes it mean the same on any seal.
     pub fn tightness(&self, radius: f32) -> f32 {
-        if radius <= f32::EPSILON || !matches!(
-            self.convergence,
-            Convergence::Converging | Convergence::Diverging | Convergence::Split
-        ) {
+        if radius <= f32::EPSILON
+            || !matches!(
+                self.convergence,
+                Convergence::Converging | Convergence::Diverging | Convergence::Split
+            )
+        {
             return 0.0;
         }
         (1.0 - self.spread / radius).clamp(0.0, 1.0)
@@ -538,6 +540,13 @@ impl Focus {
 /// [`Focus::at`] is reliable and [`Focus::convergence`] inherits whatever the
 /// recognizer decided about direction.
 pub fn focus(signs: &[Sign], radius: f32, directional: impl Fn(&SignId) -> bool) -> Focus {
+    /// One sign as a ray: where it sits, which way it points, how hard.
+    struct Ray {
+        from: (f32, f32),
+        along: (f32, f32),
+        weight: f32,
+    }
+
     let unaimed = Focus {
         at: (0.0, 0.0),
         convergence: Convergence::Unaimed,
@@ -549,7 +558,7 @@ pub fn focus(signs: &[Sign], radius: f32, directional: impl Fn(&SignId) -> bool)
     }
 
     // Where each sign sits, which way it points, and how hard it pushes.
-    let mut rays: Vec<((f32, f32), (f32, f32), f32)> = Vec::new();
+    let mut rays: Vec<Ray> = Vec::new();
     for sign in signs {
         if !directional(&sign.kind) {
             continue;
@@ -558,16 +567,17 @@ pub fn focus(signs: &[Sign], radius: f32, directional: impl Fn(&SignId) -> bool)
         if weight <= f32::EPSILON {
             continue;
         }
-        let at = (
-            radius * sign.placement.cos(),
-            radius * sign.placement.sin(),
-        );
+        let at = (radius * sign.placement.cos(), radius * sign.placement.sin());
         let heading = if sign.reversed {
             sign.orientation + std::f32::consts::PI
         } else {
             sign.orientation
         };
-        rays.push((at, (heading.cos(), heading.sin()), weight));
+        rays.push(Ray {
+            from: at,
+            along: (heading.cos(), heading.sin()),
+            weight,
+        });
     }
     if rays.len() < 2 {
         return Focus {
@@ -580,15 +590,15 @@ pub fn focus(signs: &[Sign], radius: f32, directional: impl Fn(&SignId) -> bool)
     // same §4.3 break `balance` was caught by, and the same fix.
     let mut terms: Vec<[f32; 5]> = rays
         .iter()
-        .map(|&(at, dir, weight)| {
-            let normal = (-dir.1, dir.0);
-            let along = normal.0 * at.0 + normal.1 * at.1;
+        .map(|ray| {
+            let normal = (-ray.along.1, ray.along.0);
+            let reach = normal.0 * ray.from.0 + normal.1 * ray.from.1;
             [
-                weight * normal.0 * normal.0,
-                weight * normal.0 * normal.1,
-                weight * normal.1 * normal.1,
-                weight * normal.0 * along,
-                weight * normal.1 * along,
+                ray.weight * normal.0 * normal.0,
+                ray.weight * normal.0 * normal.1,
+                ray.weight * normal.1 * normal.1,
+                ray.weight * normal.0 * reach,
+                ray.weight * normal.1 * reach,
             ]
         })
         .collect();
@@ -624,25 +634,22 @@ pub fn focus(signs: &[Sign], radius: f32, directional: impl Fn(&SignId) -> bool)
         };
     }
 
-    let at = (
-        (a11 * b0 - a01 * b1) / det,
-        (a00 * b1 - a01 * b0) / det,
-    );
+    let at = ((a11 * b0 - a01 * b1) / det, (a00 * b1 - a01 * b0) / det);
 
     // Ahead of the sign or behind it — the difference between gathering power
     // at a point and spreading it from one.
     let (mut ahead, mut behind) = (0usize, 0usize);
     let (mut miss, mut total) = (0.0f32, 0.0f32);
-    for &(from, dir, weight) in &rays {
-        let to = (at.0 - from.0, at.1 - from.1);
-        if to.0 * dir.0 + to.1 * dir.1 >= 0.0 {
+    for ray in &rays {
+        let to = (at.0 - ray.from.0, at.1 - ray.from.1);
+        if to.0 * ray.along.0 + to.1 * ray.along.1 >= 0.0 {
             ahead += 1;
         } else {
             behind += 1;
         }
-        let off = -dir.1 * to.0 + dir.0 * to.1;
-        miss += weight * off * off;
-        total += weight;
+        let off = -ray.along.1 * to.0 + ray.along.0 * to.1;
+        miss += ray.weight * off * off;
+        total += ray.weight;
     }
 
     Focus {

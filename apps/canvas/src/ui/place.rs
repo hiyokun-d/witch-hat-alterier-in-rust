@@ -94,6 +94,7 @@ pub fn drag(
     mut placing: ResMut<Placing>,
     mut pad: ResMut<InkPad>,
     mut tutor: ResMut<super::tutor::Tutor>,
+    reading: Res<crate::reading::Reading>,
 ) {
     let Mode::Place(shape) = tools.mode else {
         placing.from = None;
@@ -155,7 +156,14 @@ pub fn drag(
 
         stamp::place(
             &mut pad,
-            stamp::draw_shape(shape, center, radius, facing, tools.stamp_gap),
+            stamp::draw_shape(
+                shape,
+                &reading.shapes,
+                center,
+                radius,
+                facing,
+                tools.stamp_gap,
+            ),
         );
 
         // A drag says what size you wanted, so the next click agrees with the
@@ -169,6 +177,7 @@ pub fn preview(
     pointer: Res<Pointer>,
     tools: Res<ToolState>,
     placing: Res<Placing>,
+    reading: Res<crate::reading::Reading>,
     mut gizmos: Gizmos<super::guides::GuideGizmos>,
 ) {
     let Mode::Place(shape) = tools.mode else {
@@ -193,7 +202,14 @@ pub fn preview(
 
     // Built by the same functions that will build the ink, so the preview is
     // the thing itself rather than a drawing of it.
-    for stroke in stamp::draw_shape(shape, center, radius, facing, tools.stamp_gap) {
+    for stroke in stamp::draw_shape(
+        shape,
+        &reading.shapes,
+        center,
+        radius,
+        facing,
+        tools.stamp_gap,
+    ) {
         for pair in stroke.windows(2) {
             gizmos.line_2d(pair[0], pair[1], ghost);
         }
@@ -222,7 +238,12 @@ const GHOST: Color = Color::srgba(0.42, 0.34, 0.62, 0.60);
 /// one button you cannot guess the result of, and the hint line can only say
 /// its name. Drawing the actual strokes costs nothing — [`stamp::seal`] is the
 /// same function the button calls, so the preview cannot drift from the result.
-pub fn preset_preview(pointer: Res<Pointer>, tools: Res<ToolState>, mut gizmos: Gizmos) {
+pub fn preset_preview(
+    pointer: Res<Pointer>,
+    tools: Res<ToolState>,
+    reading: Res<crate::reading::Reading>,
+    mut gizmos: Gizmos,
+) {
     let Some(over) = pointer.over_tool else {
         return;
     };
@@ -234,10 +255,18 @@ pub fn preset_preview(pointer: Res<Pointer>, tools: Res<ToolState>, mut gizmos: 
         return;
     }
 
-    let Some((_, _, signs, open, inward)) = crate::sim::PRESETS.get(tools.preset) else {
+    let Some(preset) = crate::sim::PRESETS.get(tools.preset) else {
         return;
     };
-    for stroke in stamp::seal(Vec2::ZERO, tools.stamp_radius, *signs, *open, *inward) {
+    for stroke in stamp::seal(
+        &reading.shapes,
+        preset.sigil,
+        Vec2::ZERO,
+        tools.stamp_radius,
+        preset.signs,
+        preset.open,
+        preset.inward,
+    ) {
         for pair in stroke.windows(2) {
             gizmos.line_2d(pair[0], pair[1], GHOST);
         }

@@ -158,6 +158,9 @@ pub struct Mark {
     /// The size the recognizer divided out — a sigil's extent, a sign's power
     /// (§2.4, §3.1). Captured here because nothing downstream could recover it.
     pub scale: f32,
+    /// Radians the drawing had to be turned to meet the template it matched.
+    /// Always zero for a sigil, which is matched upright.
+    pub turn: f32,
 }
 
 /// A node of the merge tree: some strokes, and the two halves it came from.
@@ -167,26 +170,103 @@ struct Node {
 }
 
 /// Reads one group of strokes, if the recognizer can name it clearly.
-fn read(ink: &[Point], shapes: &[Recorded], all: &[Template]) -> (Option<usize>, f32) {
+/// What one group of strokes turned out to be.
+#[derive(Debug, Clone, Copy, Default)]
+struct Read {
+    /// Which recorded shape, if the recogniser could name it clearly.
+    found: Option<usize>,
+    /// The size that was divided out — a sigil's extent, a sign's power.
+    scale: f32,
+    /// How far off the winner was, whether or not it was accepted. The DP needs
+    /// this even for a rejected mark.
+    distance: f32,
+    /// Radians the drawing had to be turned to meet the template it matched.
+    /// Zero for a sigil, which is never turned (§2.2, canon rule 6).
+    turn: f32,
+}
+
+/// Reads one group of strokes, if the recognizer can name it clearly.
+///
+/// # Sigils are matched upright; signs are matched turned
+///
+/// This is the one place the two vocabularies are treated differently, and both
+/// halves are canon.
+///
+/// A **sigil** is scored upright. §2.2 says a sigil's shape is what names it,
+/// and canon rule 6 makes a reversed mark do the opposite of an upright one, so
+/// letting a sigil rotate freely would erase a distinction the engine is built
+/// on.
+///
+/// A **sign** is scored against every template at that template's own angle,
+/// both ways round. Four keystones arranged around a ring point in four
+/// different directions — that is not an edge case, it is what §2.4's entire
+/// balance mechanic is *made of* — so at most one of them could ever sit at the
+/// template's recorded angle. A recogniser that cannot read a turned keystone
+/// cannot read a real seal, and this was exactly the bug: a stamped water orb
+/// segmented into "column, wind" instead of "water and four levitation signs",
+/// because three of its four arrows were unreadable at the angle they were
+/// drawn.
+fn read(ink: &[Point], shapes: &[Recorded], all: &[Template]) -> Read {
     let Some(cloud) = recognizer::normalize(ink, stroke::MATCH_POINTS) else {
-        return (None, 0.0);
+        return Read {
+            distance: NEAR_ENOUGH,
+            ..Read::default()
+        };
     };
+    let miss = Read {
+        scale: cloud.scale,
+        distance: NEAR_ENOUGH,
+        ..Read::default()
+    };
+
+    // Both rankings, and the better answer wins. Running only the aligned one
+    // would let a rotated *sigil* through, and running only the upright one is
+    // the bug above. A sigil that happens to score well aligned still has to
+    // beat its own upright score to be chosen, and it never can — aligning can
+    // only ever lower a distance.
+    let upright = recognizer::rank(&cloud, all);
+    let aligned = recognizer::rank_aligned(&cloud, all);
+
     // Ranked rather than classified: the runner-up is what says whether the
     // winner actually won.
-    let ranked = recognizer::rank(&cloud, all);
-    let Some(found) = ranked.first().copied() else {
-        return (None, cloud.scale);
+    let mut ranked: Vec<(usize, f32, f32)> = shapes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, rune)| match rune.kind {
+            Kind::Sigil => upright
+                .iter()
+                .find(|found| found.index == index)
+                .map(|found| (index, found.distance, 0.0)),
+            Kind::Sign => aligned
+                .iter()
+                .find(|found| found.index == index)
+                .map(|found| (index, found.distance, found.turn)),
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+
+    let Some(&(index, distance, turn)) = ranked.first() else {
+        return miss;
     };
-    let winner = &shapes[found.index];
-    let rival = ranked.iter().skip(1).find(|other| {
-        let theirs = &shapes[other.index];
+    let winner = &shapes[index];
+    let rival = ranked.iter().skip(1).find(|(other, _, _)| {
+        let theirs = &shapes[*other];
         theirs.kind != winner.kind || theirs.template.name != winner.template.name
     });
-    let clear = rival.is_none_or(|other| other.distance - found.distance >= CLEAR_MARGIN);
-    if found.distance > NEAR_ENOUGH || !clear {
-        return (None, cloud.scale);
+    let clear = rival.is_none_or(|(_, other, _)| other - distance >= CLEAR_MARGIN);
+    if distance > NEAR_ENOUGH || !clear {
+        return Read {
+            scale: cloud.scale,
+            distance,
+            ..Read::default()
+        };
     }
-    (Some(found.index), cloud.scale)
+    Read {
+        found: Some(index),
+        scale: cloud.scale,
+        distance,
+        turn,
+    }
 }
 
 /// Splits a set of strokes into the marks that read best.
@@ -277,22 +357,21 @@ pub fn segment(points: &[Point], ids: &[u32], shapes: &[Recorded]) -> Vec<Mark> 
             .iter()
             .flat_map(|&which| strokes[which].1.iter().copied())
             .collect();
-        let (found, scale) = read(&ink, shapes, &all);
+        // The distance comes back with the answer. It used to be recovered by
+        // running `normalize` and `rank` a *second* time for the score, which
+        // doubled the cost of the whole search for a number the first call
+        // already had in its hand.
+        let said = read(&ink, shapes, &all);
         marks.push(Mark {
             strokes: node.strokes.iter().map(|&which| strokes[which].0).collect(),
-            read: found,
-            scale,
+            read: said.found,
+            scale: said.scale,
+            turn: said.turn,
         });
 
         // A clear match earns by how clear it is; ink nobody can read costs.
-        let alone = match found {
-            Some(_) => {
-                let ranked = recognizer::normalize(&ink, stroke::MATCH_POINTS)
-                    .map(|cloud| recognizer::rank(&cloud, &all))
-                    .unwrap_or_default();
-                let distance = ranked.first().map_or(NEAR_ENOUGH, |m| m.distance);
-                1.0 - distance / NEAR_ENOUGH
-            }
+        let alone = match said.found {
+            Some(_) => 1.0 - said.distance / NEAR_ENOUGH,
             None => -UNREAD_COST,
         };
         // `>=` keeps a node whole on a tie: fewer, larger marks is the reading

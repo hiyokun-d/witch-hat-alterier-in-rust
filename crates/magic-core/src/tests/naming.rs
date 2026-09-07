@@ -46,6 +46,28 @@ fn ring_ink(radius: f32, id: u32) -> Vec<Point> {
         .collect()
 }
 
+/// One of the built-in shapes, placed, scaled and turned.
+///
+/// Turned about its own centre, which is what a keystone drawn at the side of a
+/// ring actually is — canon's `placement` is where it sits, and its rotation is
+/// its own.
+fn rotated(which: &str, at: (f32, f32), scale: f32, by: f32, first_id: u32) -> Vec<Point> {
+    let (sin, cos) = by.sin_cos();
+    mark(which, (0.0, 0.0), scale, first_id)
+        .into_iter()
+        .map(|p| Point {
+            x: at.0 + p.x * cos - p.y * sin,
+            y: at.1 + p.x * sin + p.y * cos,
+            stroke_id: p.stroke_id,
+        })
+        .collect()
+}
+
+/// A keystone turned to point at the ring's centre from where it sits.
+fn turned_mark(which: &str, at: (f32, f32), scale: f32, first_id: u32) -> Vec<Point> {
+    rotated(which, at, scale, at.1.atan2(at.0), first_id)
+}
+
 /// One of the built-in shapes, placed and scaled.
 fn mark(which: &str, at: (f32, f32), scale: f32, first_id: u32) -> Vec<Point> {
     let (_, _, strokes) = shapes::built_in()
@@ -312,4 +334,44 @@ fn a_sigil_and_a_keystone_beside_it_stay_two_marks() {
         "the keystone was swallowed by the sigil"
     );
     assert_eq!(glyph.signs[0].kind.as_str(), "column");
+}
+
+#[test]
+fn keystones_are_read_at_whatever_angle_they_are_drawn() {
+    // **The bug that made every real seal unreadable.** Four keystones around a
+    // ring point in four different directions — §2.4's whole balance mechanic
+    // is made of that — so at most one of them can ever sit at the template's
+    // own recorded angle. `$P` keeps rotation deliberately (canon rule 6), and
+    // for a sigil that is right; for a sign it meant a stamped water orb
+    // segmented into "column, wind" instead of a sigil and four arrows, and the
+    // seal was refused as unreadable.
+    let mut ink = ring_ink(160.0, 0);
+    ink.extend(mark("water", (0.0, 0.0), 34.0, 1));
+    for (n, (x, y)) in [(0.0, 96.0), (96.0, 0.0), (0.0, -96.0), (-96.0, 0.0)]
+        .into_iter()
+        .enumerate()
+    {
+        ink.extend(turned_mark("column", (x, y), 22.0, 20 + n as u32 * 4));
+    }
+
+    let glyph = seal(ink);
+    assert_eq!(glyph.sigil.as_ref().map(|id| id.as_str()), Some("water"));
+    assert_eq!(glyph.signs.len(), 4, "keystones read: {:?}", glyph.signs);
+    assert!(glyph.signs.iter().all(|s| s.kind.as_str() == "column"));
+    assert_eq!(glyph.unnamed, 0);
+}
+
+#[test]
+fn a_sigil_is_still_matched_upright() {
+    // The other half, and it must not regress: §2.2 names a sigil by its shape
+    // and canon rule 6 makes a reversed mark mean the opposite, so a sigil that
+    // could rotate freely would erase a distinction the engine is built on.
+    // A fire sigil turned on its head is not a fire sigil.
+    let mut ink = ring_ink(140.0, 0);
+    ink.extend(rotated("fire", (0.0, 0.0), 40.0, std::f32::consts::PI, 1));
+    assert_ne!(
+        seal(ink).sigil.as_ref().map(|id| id.as_str()),
+        Some("fire"),
+        "an upside-down fire sigil must not read as fire"
+    );
 }

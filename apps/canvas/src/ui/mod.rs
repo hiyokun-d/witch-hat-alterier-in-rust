@@ -72,21 +72,12 @@ pub enum Shape {
     Ring,
     /// A ring with a deliberate hole. Canon rule 2's prepared spell.
     Arc,
-    /// Two crossed strokes to put *inside* a ring. Not a canon sigil, and not
-    /// pretending to be — see [`stamp::cross`].
-    Cross,
     /// A keystone: a mark with a length and a direction, to arrange *around* a
     /// sigil. Drag aims it; §2.4 makes both the length and the aim matter.
     Sign,
     /// A claw. Neither sign nor sigil, and the only mark canon lets you draw
     /// outside the ring — place it straddling the line.
     Glaive,
-    /// A straight keystone. Length is power, direction is aim (§2.4) — the
-    /// mark to use when what is being tested is balance rather than shape.
-    Bar,
-    /// A three-sided mark, after canon's note that whorling wind is
-    /// three-sided. A stand-in for that shape, not a claim to be it.
-    Triangle,
     /// Ink that turns more than once. The ring search must *reject* this, and
     /// this is how to make one without a steady hand.
     Spiral,
@@ -151,18 +142,16 @@ pub struct ToolState {
     pub trace: bool,
     /// The simulation overlay: parcels, cell density, and what it is doing.
     pub sim: bool,
-    /// Which sigil the pad's seals are treated as, by position in the
-    /// catalogue's own order. `None` leaves the recognizer to it.
+    /// Whether only runes that were actually traced may name a mark or fire a
+    /// seal.
     ///
-    /// **A testing override, not a claim about shapes.** `templates.ron` is
-    /// empty on purpose (§2 — the runes belong to the manga and have to be
-    /// traced), so without this every seal on the pad compiles to rule 9's
-    /// discharge and the whole compiler is unreachable from the app. Naming a
-    /// sigil is not the same as inventing what it looks like.
-    pub sigil: Option<usize>,
-    /// Which canon spell fixture from `spells.ron` the pad's seals are built
-    /// as. Overrides `sigil`, because a fixture names one.
-    pub fixture: Option<usize>,
+    /// On by default, and it replaces the naming override outright. That
+    /// override existed because `templates.ron` shipped empty and the compiler
+    /// was otherwise unreachable from the app — a real problem then, solved now
+    /// that runes are traced, and its cost was that the one button guaranteed
+    /// to produce a working spell was the one button that bypassed the
+    /// recogniser. See `sim::refuses` and `reading::load_shapes`.
+    pub only_traced: bool,
     /// Which substance the `pour` button drops.
     pub pour: usize,
     /// What the `kindle` button scatters, by position in
@@ -170,12 +159,6 @@ pub struct ToolState {
     pub kindling: usize,
     /// Which seal the `preset` button lays down.
     pub preset: usize,
-    /// Which seal the guide teaches.
-    ///
-    /// Its own choice, not the preset's. They were one field, which meant
-    /// picking something to *stamp* silently changed what you were being
-    /// *taught* — two different intentions sharing one number.
-    pub lesson: usize,
     /// Which rune the next `record` is traced *as*, by position in the
     /// catalogue's sigils. `None` falls back to a numbered placeholder.
     pub tracing: Option<usize>,
@@ -203,12 +186,10 @@ impl Default for ToolState {
             runes: true,
             trace: true,
             sim: true,
-            sigil: None,
-            fixture: None,
+            only_traced: true,
             pour: 0,
             kindling: 0,
             preset: 0,
-            lesson: 0,
             auto: true,
             walls: true,
             tracing: None,
@@ -257,6 +238,8 @@ pub enum Toggle {
     Runes,
     /// The tracing board: what `record` will save, and how close it is.
     Trace,
+    /// Only traced runes may name a mark or fire a seal.
+    Traced,
     Sim,
     /// Fire a seal the moment its ring closes, with no button. Canon rule 2.
     Auto,
@@ -275,7 +258,6 @@ pub enum Command {
     Redo,
     Clear,
     ClearAll,
-    SwapPaper,
     /// Writes the pad's non-ring strokes out as a `templates.ron` fragment.
     Record,
     /// Compiles everything on the pad and casts it into the world.
@@ -286,21 +268,10 @@ pub enum Command {
     StepOnce,
     /// Empties the world without touching the ink.
     ClearWorld,
-    /// Steps through the catalogue's sigils, so a seal can be named without a
-    /// traced rune.
-    NextSigil,
-    PrevSigil,
-    /// Steps through `spells.ron`'s canon fixtures.
-    NextFixture,
-    PrevFixture,
-    /// Back to whatever the recognizer says, which is currently nothing.
-    ClearNaming,
     /// Lays a whole seal down and names it, so nothing has to be drawn.
     Preset,
     /// Chooses which preset `preset` lays down.
     NextPreset,
-    /// Chooses which seal the guide teaches.
-    NextLesson,
     /// Chooses which rune the next recording is traced as.
     NextTraced,
     /// Forgets every sample of the chosen rune, to trace it afresh.
@@ -313,8 +284,6 @@ pub enum Command {
     Kindle,
     /// Chooses what `kindle` scatters.
     NextKindling,
-    /// Sweeps every prop off the paper, leaving the ink and the world alone.
-    Sweep,
 }
 
 /// What a button does when clicked.
@@ -363,12 +332,6 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         section: "place",
-        label: "cross",
-        hint: "two strokes to put inside a ring, standing in for a sigil",
-        action: Action::Pick(Mode::Place(Shape::Cross)),
-    },
-    Tool {
-        section: "place",
         label: "sign",
         hint: "a keystone - drag to aim it, set its length. Size is power (canon 2.4)",
         action: Action::Pick(Mode::Place(Shape::Sign)),
@@ -381,27 +344,15 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         section: "place",
-        label: "erase",
-        hint: "rub out one stroke - click the ink you want gone",
-        action: Action::Pick(Mode::Place(Shape::Erase)),
-    },
-    Tool {
-        section: "place",
-        label: "bar",
-        hint: "a straight keystone - length is power, direction is aim",
-        action: Action::Pick(Mode::Place(Shape::Bar)),
-    },
-    Tool {
-        section: "place",
-        label: "triangle",
-        hint: "a three-sided mark, after whorling wind",
-        action: Action::Pick(Mode::Place(Shape::Triangle)),
-    },
-    Tool {
-        section: "place",
         label: "spiral",
         hint: "ink that turns twice - the ring search must reject this",
         action: Action::Pick(Mode::Place(Shape::Spiral)),
+    },
+    Tool {
+        section: "place",
+        label: "erase",
+        hint: "rub out one stroke - click the ink you want gone",
+        action: Action::Pick(Mode::Place(Shape::Erase)),
     },
     Tool {
         section: "place",
@@ -459,12 +410,6 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         section: "pad",
-        label: "paper",
-        hint: "full sheet or a round one  (F three times)",
-        action: Action::Run(Command::SwapPaper),
-    },
-    Tool {
-        section: "pad",
         label: "trace >",
         hint: "choose which rune the next recording is traced as",
         action: Action::Run(Command::NextTraced),
@@ -519,12 +464,6 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         section: "name",
-        label: "guide >",
-        hint: "choose which seal the guide teaches",
-        action: Action::Run(Command::NextLesson),
-    },
-    Tool {
-        section: "name",
         label: "preset",
         hint: "lay down a whole seal and name it - nothing to draw",
         action: Action::Run(Command::Preset),
@@ -534,36 +473,6 @@ pub const TOOLS: &[Tool] = &[
         label: "preset >",
         hint: "choose which seal preset lays down",
         action: Action::Run(Command::NextPreset),
-    },
-    Tool {
-        section: "name",
-        label: "sigil >",
-        hint: "place the as the next sigil in the catalogue",
-        action: Action::Run(Command::NextSigil),
-    },
-    Tool {
-        section: "name",
-        label: "sigil <",
-        hint: "the previous one",
-        action: Action::Run(Command::PrevSigil),
-    },
-    Tool {
-        section: "name",
-        label: "spell >",
-        hint: "build the seal as the next canon spell from spells.ron",
-        action: Action::Run(Command::NextFixture),
-    },
-    Tool {
-        section: "name",
-        label: "spell <",
-        hint: "the previous fixture",
-        action: Action::Run(Command::PrevFixture),
-    },
-    Tool {
-        section: "name",
-        label: "unname",
-        hint: "back to what the recognizer says - which is nothing yet",
-        action: Action::Run(Command::ClearNaming),
     },
     Tool {
         section: "cast",
@@ -621,15 +530,15 @@ pub const TOOLS: &[Tool] = &[
     },
     Tool {
         section: "cast",
-        label: "sweep",
-        hint: "clear the paper of props, leaving the ink and the world alone",
-        action: Action::Run(Command::Sweep),
-    },
-    Tool {
-        section: "cast",
         label: "empty",
         hint: "clear the world, leaving the ink alone",
         action: Action::Run(Command::ClearWorld),
+    },
+    Tool {
+        section: "view",
+        label: "traced",
+        hint: "only runes you traced can name a mark or fire a seal - off, built-ins and the blast come back",
+        action: Action::Toggle(Toggle::Traced),
     },
     Tool {
         section: "view",
@@ -728,15 +637,27 @@ fn keyboard(keys: Res<ButtonInput<KeyCode>>, mut tools: ResMut<ToolState>) {
 /// Everything a command does, some keyboard shortcut already did. That is on
 /// purpose — the panel is a second way in, never the only way, so nothing here
 /// can become the sole route to a feature.
+/// What a command may *look at* — as against what it may change.
+///
+/// Grouped because the two read-only halves arrived together and a run of eight
+/// positional arguments is a run nobody reads. The mutable four stay separate:
+/// which of them a command touches is the interesting part of its signature.
+pub struct Bench<'a> {
+    pub window: &'a Window,
+    /// What the pad currently reads as, and which runes are traced.
+    pub reading: &'a crate::reading::Reading,
+}
+
 pub fn run(
     command: Command,
     tools: &mut ToolState,
     pad: &mut InkPad,
     shape: &mut crate::PaperShape,
-    window: &Window,
     last: &mut record::LastRecording,
     world: &mut crate::sim::Simulation,
+    bench: &Bench,
 ) {
+    let Bench { window, reading } = bench;
     // Clamped against the sheet, not just its own range: the window can be
     // resized and the paper swapped for a smaller round one without anyone
     // touching the radius.
@@ -783,16 +704,6 @@ pub fn run(
             world.armed.clear();
         }
 
-        Command::SwapPaper => {
-            // Swapping wipes the pad, exactly as the keyboard path does — ink
-            // drawn on a full sheet has no meaning on a round one.
-            *shape = match *shape {
-                crate::PaperShape::Full => crate::PaperShape::Disc,
-                crate::PaperShape::Disc => crate::PaperShape::Full,
-            };
-            shortcuts::clear_all(pad);
-        }
-
         Command::Cast => {
             // The result goes on the hint line for the same reason recording's
             // does: nobody is reading a terminal while drawing.
@@ -825,80 +736,35 @@ pub fn run(
             last.0 = Some("world emptied, air back".to_string());
         }
 
-        Command::NextSigil | Command::PrevSigil => {
-            let names = world.lore.as_ref().map(crate::sim::sigil_names);
-            let count = names.as_ref().map_or(0, Vec::len);
-            if count == 0 {
-                last.0 = Some("catalogue failed to load".to_string());
-            } else {
-                let step = if command == Command::NextSigil {
-                    1
-                } else {
-                    count - 1
-                };
-                let next = tools.sigil.map_or(0, |at| (at + step) % count);
-                tools.sigil = Some(next);
-                tools.fixture = None;
-                // The name alone says which button you pressed. What the
-                // person wants is whether this one makes water or moves air.
-                last.0 = names
-                    .as_ref()
-                    .zip(world.lore.as_ref())
-                    .map(|(names, catalog)| {
-                        format!(
-                            "sigil {}/{count}  {}",
-                            next + 1,
-                            crate::sim::describe_sigil(catalog, &names[next])
-                        )
-                    });
-            }
-        }
-        Command::NextFixture | Command::PrevFixture => {
-            let names = world.lore.as_ref().map(crate::sim::fixture_names);
-            let count = names.as_ref().map_or(0, Vec::len);
-            if count == 0 {
-                last.0 = Some("catalogue failed to load".to_string());
-            } else {
-                let step = if command == Command::NextFixture {
-                    1
-                } else {
-                    count - 1
-                };
-                let next = tools.fixture.map_or(0, |at| (at + step) % count);
-                tools.fixture = Some(next);
-                tools.sigil = None;
-                last.0 = world.lore.as_ref().map(|catalog| {
-                    format!(
-                        "spell {}/{count}  {}",
-                        next + 1,
-                        crate::sim::describe_fixture(catalog, &names.as_ref().unwrap()[next])
-                    )
-                });
-            }
-        }
-        Command::ClearNaming => {
-            tools.sigil = None;
-            tools.fixture = None;
-            last.0 = Some("unnamed - back to what the recognizer says".to_string());
-        }
-
-        Command::NextLesson => {
-            tools.lesson = (tools.lesson + 1) % crate::sim::PRESETS.len();
-            let (id, what, signs, open, inward) = crate::sim::PRESETS[tools.lesson];
-            last.0 = Some(format!(
-                "guide will teach {id}: {what} | {signs} keystone(s) aimed {}, ring {}",
-                if inward { "IN" } else { "out" },
-                if open { "left OPEN" } else { "closed" },
-            ));
-        }
         Command::NextPreset => {
             tools.preset = (tools.preset + 1) % crate::sim::PRESETS.len();
-            let (id, what, _, _, _) = crate::sim::PRESETS[tools.preset];
-            last.0 = Some(format!("preset {id}: {what}"));
+            let preset = crate::sim::PRESETS[tools.preset];
+            last.0 = Some(format!(
+                "preset {}/{}: {} - {}",
+                tools.preset + 1,
+                crate::sim::PRESETS.len(),
+                preset.id,
+                preset.blurb
+            ));
         }
+
         Command::Preset => {
             let preset = crate::sim::PRESETS[tools.preset];
-            let (id, _, signs, open, inward) = preset;
+
+            // **Refused rather than forced.** This used to stamp a generic mark
+            // and then set a naming override, which made it the one button
+            // guaranteed to produce a working spell *and* the one button that
+            // never went through the recogniser. Now it draws the traced rune,
+            // and if there is no traced rune it declines and says which one to
+            // go and trace.
+            if tools.only_traced && !reading.is_traced(preset.sigil) {
+                last.0 = Some(format!(
+                    "{} needs a traced {} sigil - trace one and press this again",
+                    preset.id, preset.sigil
+                ));
+                return;
+            }
+
             // A fresh pad, because a preset is a known state and leftover ink
             // would make it something else.
             shortcuts::clear(pad);
@@ -906,20 +772,23 @@ pub fn run(
 
             stamp::place(
                 pad,
-                stamp::seal(Vec2::ZERO, tools.stamp_radius, signs, open, inward),
+                stamp::seal(
+                    &reading.shapes,
+                    preset.sigil,
+                    Vec2::ZERO,
+                    tools.stamp_radius,
+                    preset.signs,
+                    preset.open,
+                    preset.inward,
+                ),
             );
 
-            // Naming it is the other half. Without this the seal is ink nobody
-            // can read and compiles to rule 9's discharge.
-            tools.fixture = world.preset_fixture(tools.preset);
-            tools.sigil = None;
-            last.0 = Some(match (tools.fixture, tools.auto) {
+            last.0 = Some(match tools.auto {
                 // With `auto` on, closing the ring *is* the trigger — telling
                 // someone to press cast when the spell has already gone off is
                 // advice from two versions ago.
-                (Some(_), true) => format!("{id} placed - it fires as the ring closes"),
-                (Some(_), false) => format!("{id} placed and named - press cast"),
-                (None, _) => format!("{id} placed, but the catalogue has no such spell"),
+                true => format!("{} placed - it fires as the ring closes", preset.id),
+                false => format!("{} placed - press cast", preset.id),
             });
         }
         Command::NextPour => {
@@ -952,12 +821,6 @@ pub fn run(
                 crate::props::describe_kindling(which)
             ));
         }
-        Command::Sweep => {
-            let gone = world.sim.props.len();
-            world.sim.props.clear();
-            last.0 = Some(format!("swept {gone} prop(s) off the paper"));
-        }
-
         Command::NextTraced => {
             // `traceable`, not `sigil_names` — and that was a real bug. `record`
             // has always indexed the combined list, sigils and then signs, while
@@ -1027,6 +890,7 @@ pub fn is_on(toggle: Toggle, tools: &ToolState) -> bool {
         Toggle::Spell => tools.spell,
         Toggle::Runes => tools.runes,
         Toggle::Trace => tools.trace,
+        Toggle::Traced => tools.only_traced,
         Toggle::Sim => tools.sim,
         Toggle::Auto => tools.auto,
         Toggle::Walls => tools.walls,
@@ -1042,6 +906,7 @@ pub fn flip(toggle: Toggle, tools: &mut ToolState) {
         Toggle::Spell => tools.spell = !tools.spell,
         Toggle::Runes => tools.runes = !tools.runes,
         Toggle::Trace => tools.trace = !tools.trace,
+        Toggle::Traced => tools.only_traced = !tools.only_traced,
         Toggle::Sim => tools.sim = !tools.sim,
         Toggle::Auto => tools.auto = !tools.auto,
         Toggle::Walls => tools.walls = !tools.walls,

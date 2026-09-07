@@ -471,3 +471,7 @@ fn place_credit(window: Single<&Window>, mut credit: Single<&mut Transform, With
 #[cfg(test)]
 #[path = "tests/main.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/seal_round_trip.rs"]
+mod seal_round_trip;

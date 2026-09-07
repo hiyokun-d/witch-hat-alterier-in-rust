@@ -798,11 +798,38 @@ M4  Recognizer        ██████████ 9/9   ✅
 M5  Compiler ring     ██████████ 8/8   ✅
 M6  Elements/physics  ██████████ 8/8   ✅
 M7  Reactions         ██████████ 8/8   ✅
-M8  Web build         ████░░░░░░ 3/7   ← current
-M8  Web build         ░░░░░░░░░░ 0/7
-M9  Camera & vision   ░░░░░░░░░░ 0/7
-M10 AR & polish       ░░░░░░░░░░ 0/7
+M8  Web build         ████░░░░░░ 3/7   DROPPED
+M9  Camera & vision   ░░░░░░░░░░ 0/7   DROPPED
+M10 AR & polish       ░░░░░░░░░░ 0/7   DROPPED
+--- the milestone track ends at M7 ---
+P   Polish            ░░░░░░░░░░       ← current, and open-ended
 ```
+
+**M7 is the last milestone. M8, M9 and M10 are dropped**, on Daffa's call: "in
+other word we're done here m7 is the last part, and all we need to do left is
+just to polish and fix all of the bugs that still here, and improve everything
+to the max, and optimize everything and after that we can build it up and get my
+friend try."
+
+So there is no web build, no camera, no AR. What is left is not a milestone with
+a task count — it is **polish, bugs, and speed, until a friend can be handed the
+app**. That is a real change of shape and the plan should say so rather than
+pretend the numbered track continues.
+
+Three consequences worth writing down before they are forgotten:
+
+- **The wasm work stays and stays honest.** M8.1 to M8.3 are done and every
+  `cfg(target_arch = "wasm32")` branch in the tree is still correct. None of it
+  is removed, because §4.1's "core must compile to wasm untouched" was never
+  about shipping a web build — it is the constraint that kept `std::fs`, clocks
+  and randomness out of core, and every one of those refusals still pays. What
+  goes is the *plan* to finish a browser shell, not the discipline.
+- **"A friend tries it" is now the acceptance test**, and it is a harder one
+  than a task list. It means: nothing on screen lies, nothing needs explaining
+  before it works, and no button does something a person would not expect.
+- **`./run.sh` is the delivery path**, not `./web.sh`. macOS gives unbundled
+  binaries no activation policy, so a real `.app` is the only build that gets
+  keystrokes.
 
 M4 came in at nine tasks, not the eight first planned: M4.2b — assembling
 strokes into rings — was scoped as part of M4.2 and turned out to be its own
@@ -816,6 +843,219 @@ not a web build worth having.
 **The one thing still blocking the recognizer is not code.** `templates.ron`
 ships empty and the shapes have to be traced. `record` writes them now, so the
 step is a person tracing panels, not a missing feature.
+
+**Every real seal was unreadable, and rotation was why.**
+
+The end-to-end test found it in one line: a stamped `flamespout` read back as a
+**water** sigil. Printing the segmentation showed the rest —
+
+```
+flamespout   12 stroke(s) -> ["water:Sigil", "levitation:Sign", "?", "column:Sign", "fire:Sigil"]
+fire_shot    10 stroke(s) -> ["?"]
+```
+
+— which is not a near miss, it is nonsense. And the cause is a decision made
+back in M4.6 and defended ever since: **`$P` keeps rotation, because canon rule 6
+makes a reversed mark do the opposite of an upright one.**
+
+For a sigil that is right and stays right. For a **sign** it is unworkable, and
+it should have been obvious the moment `water_orb` existed: four keystones
+arranged around a ring point in four different directions, so **at most one of
+them can ever sit at the template's own angle**. That is not an edge case — it is
+what §2.4's entire balance mechanic is made of. Three of every four arrows were
+unreadable, the leftovers merged into blobs that happened to score near some
+other rune, and the seal compiled to a discharge and was refused.
+
+`recognizer::rank_aligned` scores a gesture against each template at *that
+template's* angle, found by the **principal axis** of the point covariance —
+order-invariant, scale-invariant, and defined up to 180 degrees. It tries both
+ways round, because that ambiguity is exactly what canon rule 6 is about: a sign
+and its reversed twin lie on the same axis and do opposite things. Two distance
+computations per template rather than one; it does not sweep angles, which would
+be twenty times the work for an answer the covariance gives exactly.
+
+`principal_axis` returns `None` for a mark with no direction, and that is a real
+answer rather than a failure — §2.3 says outright that a non-directional sign has
+"no front to point", so inventing an orientation for a radial mark would be
+inventing a rule canon denies.
+
+`naming::read` now runs both rankings and takes each rune's answer from the one
+its kind calls for. Two tests pin the pair, and the second matters more than the
+first: `keystones_are_read_at_whatever_angle_they_are_drawn`, and
+`a_sigil_is_still_matched_upright` — because a fix that let everything rotate
+would pass the first and quietly delete canon rule 6.
+
+**Two smaller things the same test caught:**
+
+- `stamp::rune` scaled by the recogniser's RMS, which says nothing about where a
+  shape's *tips* land — so an oversized sigil touched the keystones around it,
+  and `naming` segments on the gaps between strokes. It scales by the furthest
+  point now, so `seal` can promise the sigil fits inside a quarter of the ring
+  while the keystones reach in to half of it.
+- `naming::read` was running `normalize` and `rank` a **second** time purely to
+  recover the distance for the DP's score — doubling the cost of the whole search
+  for a number the first call already had in its hand.
+
+**The test that found it could not have been a unit test.** Every piece was
+already covered and every piece was working: the stamp drew, the ring search
+found, `naming` segmented, the compiler compiled. The seal still failed, because
+the geometry one part chose was input another part should never have been given.
+`seal_round_trip.rs` presses `preset`, reads the pad back, and asserts the spell
+that comes out is the spell the button promised — which is the test a friend runs
+without knowing it.
+
+**A ring closed, nothing happened, and nothing said why.**
+
+Reported as "some of the particle won't run even tho the ring is closed", and it
+was not the particles. Core emits an event for every outcome — a scratch test
+confirmed all six sigils announce something, including earth's `Refused` when
+there is no stone in reach. What was missing was in the shell: `watch_the_pad`
+reported a cast and said **nothing at all** about a seal it had declined.
+
+That was a hole I made in the same change that added the refusal. A ring that
+closes and does nothing, with nothing on screen saying why, is indistinguishable
+from a ring that closed and the app missed it — which is exactly how it got
+reported.
+
+Two fixes, and the first is the one worth remembering: **the rising edge is
+about the ring, not about the cast.** `Armed::fired` now tracks whether the
+circuit was closed last frame, so a refused seal has still had its one moment and
+does not re-ask sixty times a second. A refusal reprinted every frame is the same
+as no refusal at all.
+
+The second is where it appears. The panel gets `ring closed, nothing cast - ...`,
+and the **caption over the seal** — the closest text to the drawing — now says
+`NOT CAST - ...` where it used to say `DISCHARGE - a blast` about a spell the app
+was quietly never going to fire. A caption confidently naming a spell that will
+not happen is worse than a blank one.
+
+`announce` also lost an early return: a `Fired` outcome that raised zero mass
+emitted no event at all, which made a strange thing a person should be able to
+*watch* happen look identical to a cast that never occurred.
+
+**There were two recognisers, and they disagreed.**
+
+Reported as "the recogniser IS NOT SYNC at all, so it got it all wrong", and it
+was exactly that. `debug.rs` kept a private `Runes` resource — the shipped file
+plus the recorder's — while `reading.rs` built its own list of the same two
+*plus* the built-in reconstructions. Two vocabularies, ranked separately, so the
+board scored a drawing against eight shapes while the compiler beneath it scored
+the same drawing against eleven. Neither was wrong about its own list. A readout
+that does not describe the thing it sits next to is worse than no readout, and
+this one had been lying since the day the built-ins landed.
+
+`Reading::shapes` is now the only such list in the app, with `sources`
+index-aligned beside it so the board can still say where each shape came from.
+`Runes`, `reload_runes` and `reload_from_disk` are deleted. §0 made that cheap:
+the overlay is allowed to read app state and never to keep its own.
+
+**Canon rule 9 is still in the engine. This app declines to fire it.**
+
+Reported plainly: "BLAST is still can be casted even tho we're not records any
+of it, so i want you to remove it". The tension is real — rule 9 is one of the
+firmest things the wiki says, and §2 forbids breaking a canon rule for
+convenience — so the refusal is a **tool policy in the shell**, not a change to
+the compiler. `compile` still returns `Driver::Discharge` for a bare ring, still
+reports full intensity, and every discharge test still passes. `sim::refuses` is
+what the app consults before casting.
+
+The reason is the workshop rather than the fiction. *Every* ring holding ink the
+recogniser cannot read compiles to the same discharge as an empty one — so while
+the vocabulary is a handful of runes deep, "blast" is what almost every misread
+drawing does. A spell that goes off when the app did not understand you teaches
+nothing and buries the thing you were trying to look at. **A seal fires when it
+was understood.** The refusal even distinguishes the two cases, because they
+want different advice: a bare ring wants a sigil drawn, a ring full of unread
+marks wants the sigil it already has *traced*.
+
+`traced` on the panel turns it off and puts rule 9 back, which is the honest way
+to hold a canon rule and a working tool at the same time.
+
+**Built-in sigils are excluded while `traced` is on; built-in signs are not.**
+The asymmetry is the point rather than a compromise. A sigil decides *what* the
+magic is, and §12 is explicit that these shapes are stand-ins — reconstructions
+of a community project's reconstructions — which is not a thing to fire a spell
+on by accident. A sign decides what *shape* the magic takes, so a misread
+keystone gives you the wrong spout rather than the wrong element, and keeping
+them is what lets a seal be built at all before anybody has traced forty-four
+keystones.
+
+**The preset was the one button that bypassed the recogniser.**
+
+It stamped a generic cross-and-triangle in the middle and then set a naming
+override so the seal would compile to something. So the button most likely to be
+pressed by somebody learning the app was the button that never went through the
+recogniser at all — and it was *also* the reason a preset could cast magic
+nobody had traced.
+
+`stamp::rune` un-normalises a recorded template back onto the pad: `Cloud`
+divides out position and scale and keeps both, so putting a rune back is the
+same arithmetic run backwards, and `stroke_id` survives normalisation untouched
+— which matters, because `naming` segments on the gaps between strokes. So a
+preset now draws **your** traced fire, and names itself the way a hand-drawn seal
+does. Where there is no traced rune it declines and says which one to go and
+trace.
+
+That let the whole naming override go: `sigil >`, `sigil <`, `spell >`,
+`spell <` and `unname`, plus `ToolState::sigil`, `ToolState::fixture`,
+`apply_naming`, `fixture_signs` and `preset_fixture`. It existed because
+`templates.ron` shipped empty and the compiler was otherwise unreachable from
+the app — a real problem then, and solved by the thing it was standing in for.
+
+`PRESETS` became a struct on the way, having outgrown a positional tuple two
+fields ago, and lost `everlasting`: a fine spell built on the repetition sigil,
+which is to say a button that could only ever be refused.
+
+**A spell now runs for between fifteen and forty-five seconds**, and the floor is
+the half worth arguing about. Rule 8 grades a seal on how neatly it was drawn,
+and grading one down to a splash that is over before you have looked at it
+teaches nothing — a rough seal should be visibly *worse* than a neat one and
+still be a spell. `Fleeting` is the one exception and keeps its short life,
+because canon's own word for a ring too rough to hold has to cost something.
+`a_seal_that_does_not_fire_channels_for_no_time_at_all` pins the other end: an
+open ring is *prepared* (rule 2), and a floor applied before that check would
+have handed it fifteen seconds of summoning.
+
+**Where the power is aimed, which `balance` could never say.**
+
+Asked for directly: "if we want to make a water orb we need to focus all of that
+water power using 4 signs arrow so why don't we have a parameter to show such
+that". There was no such reading, and the gap is sharper than it looks — four
+arrows pointing at the middle sum to **zero drift**, so `Balance` correctly
+reports a spell that goes nowhere and is structurally incapable of saying that
+all four are pushing at one point. That is the entire difference between a water
+orb and a fountain.
+
+`arrangement::focus` reads the sign set a second way: each steering sign is a
+ray, and the answer is the **least-squares intersection** of those rays — the
+point whose total squared perpendicular distance to every ray is smallest. In
+two dimensions each ray contributes `n nᵀ` to a `2×2` matrix and the solve is a
+determinant; a singular matrix means every normal is parallel, which means every
+ray is, and that is the beam case detected rather than divided by. Weighted by
+size, because size is power (§2.4) — one arrow drawn longer drags the focal point
+toward what it is aimed at, which is the same claim canon makes about a longer
+column sign steering the whole spell.
+
+**The four convergence cases turned out to be canon's four region cases**, and
+that is a finding rather than a definition. §2.3 states them for region signs
+specifically; they fall straight out of asking where *any* set of directional
+signs points. Which is why a water orb — four levitation arrows and not one
+region sign — used to report `region Absent` while obviously converging.
+
+What it cannot know is stated where it lives: `orientation` from a hand-drawn
+mark is an *axis*, and which end is the arrowhead is what `reversed` is for. A
+line and its reverse intersect at the same place, so the focal *point* is
+reliable; converging and diverging are exactly the pair that swap when a sign is
+read backwards.
+
+**Forty-three buttons, down from fifty-four.** Gone: the five naming-override
+buttons above, `cross`, `bar` and `triangle` (a mark to put in a ring — `sign`
+and the five element stamps cover it), `paper` (still three taps of `F`),
+`sweep` (folded into `empty`), and `guide >`. That last one was two selectors for
+one intention: the guide teaches whatever `preset >` has chosen, so the button
+that stamps a seal and the guide that teaches it can no longer name different
+spells. `spiral` stayed despite being a test shape, because it is the only way
+to produce a not-a-ring from the panel and §4.8 asks for exactly that.
 
 **The seal was drawn right and the compiler was told nothing.**
 

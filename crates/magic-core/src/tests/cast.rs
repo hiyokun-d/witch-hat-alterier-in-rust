@@ -315,3 +315,55 @@ fn casting_the_same_spell_twice_gives_the_same_field() {
     };
     assert_eq!(build(), build());
 }
+
+// ---- how long a channel runs, and the floor under it -----------------------
+
+#[test]
+fn every_firing_seal_channels_for_at_least_the_floor() {
+    // **The floor is the interesting half.** Rule 8 grades a seal on how neatly
+    // it was drawn, and grading it down to a splash that is over before you
+    // have looked at it teaches nothing — a rough seal should be visibly worse
+    // than a neat one and still be a spell. Ceiling and floor are both ours
+    // (§2.6); canon gives no seconds at all.
+    let rules = CastRules::default();
+    let (floor, ceiling) = rules.channel_bounds;
+
+    for sigil in ["fire", "water", "wind", "earth", "light", "aeriforms"] {
+        let spell = spell_for(Some(sigil));
+        let left = channel_for(&spell, &rules);
+        assert!(
+            (floor..=ceiling).contains(&left),
+            "{sigil} channels for {left}s, outside {floor}..={ceiling}"
+        );
+    }
+}
+
+#[test]
+fn a_seal_too_rough_to_hold_is_the_one_exception_to_the_floor() {
+    // Canon's own word for a ring that cannot hold is `Fleeting`, and it has to
+    // cost something or the grading is decoration.
+    let mut glyph = seal(Some("water"));
+    glyph.ring = Ring::new(at(0.0, 0.0), 100.0, true, 0.5);
+    let rough = compile(&glyph, &catalog(), &CompileRules::default());
+    assert_eq!(rough.firing, Firing::Fleeting);
+
+    let rules = CastRules::default();
+    let left = channel_for(&rough, &rules);
+    assert!(left > 0.0, "a fleeting seal still casts");
+    assert!(
+        left < rules.channel_bounds.0,
+        "fleeting ran for {left}s, which is not shorter than the floor"
+    );
+}
+
+#[test]
+fn a_seal_that_does_not_fire_channels_for_no_time_at_all() {
+    // The bounds must not resurrect a spell canon says is not running: an open
+    // ring is *prepared* (rule 2), and a floor applied before that check would
+    // have given it fifteen seconds of summoning.
+    let mut glyph = seal(Some("water"));
+    glyph.ring = Ring::new(at(0.0, 0.0), 100.0, false, 0.99);
+    let open = compile(&glyph, &catalog(), &CompileRules::default());
+    assert!(!open.fires());
+    assert_eq!(channel_for(&open, &CastRules::default()), 0.0);
+}

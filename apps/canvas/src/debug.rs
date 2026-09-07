@@ -299,7 +299,6 @@ impl Plugin for DebugOverlayPlugin {
             .init_resource::<FrameTimes>()
             .init_resource::<OverlayVisible>()
             .init_resource::<Lore>()
-            .init_resource::<Runes>()
             .add_systems(
                 Update,
                 (
@@ -310,7 +309,6 @@ impl Plugin for DebugOverlayPlugin {
                     // Outside the visible group on purpose: a rune recorded
                     // while the overlay is hidden should already be loaded when
                     // it comes back, not one frame behind.
-                    reload_runes,
                 )
                     .chain(),
             );
@@ -722,7 +720,6 @@ fn update_trace(
     pad: Res<InkPad>,
     tools: Option<Res<ToolState>>,
     lore: Res<Lore>,
-    runes: Res<Runes>,
     reading: Res<Reading>,
     mut panel: Single<&mut Text2d, With<TraceLine>>,
 ) {
@@ -731,7 +728,7 @@ fn update_trace(
         return;
     }
 
-    let all = runes.all();
+    let all: Vec<(&'static str, &magic_core::Recorded)> = reading.catalogued().collect();
     let catalog = lore.0.as_ref();
 
     // What the next recording will be filed as.
@@ -748,7 +745,20 @@ fn update_trace(
     let mut out = String::from("-- tracing --\n");
     out.push_str(&match &target {
         Some((name, kind, at, of)) => {
-            format!("target     {name}  ({} {at}/{of})\n", kind.to_lowercase())
+            // What the rune you are tracing actually *does*, from the
+            // catalogue. Tracing is a long sitting, and which of the
+            // thirty-four is worth the next twenty minutes is the question.
+            let does = match (*kind == "Sigil", catalog) {
+                (true, Some(catalog)) => {
+                    crate::sim::describe_sigil(catalog, &magic_core::SigilId::from(name.as_str()))
+                }
+                _ => format!("{name} - a keystone: it shapes what the sigil does"),
+            };
+            format!(
+                "target     {name}  ({} {at}/{of})\n\
+                 does       {does}\n",
+                kind.to_lowercase()
+            )
         }
         None => "target     none - press 'trace >' to choose a rune\n".to_string(),
     });
@@ -916,26 +926,24 @@ fn world_report(
         // forgets they left it on fire has no other way to find out.
         match world.lore.as_ref() {
             None => "catalogue failed to load".to_string(),
-            Some(catalog) => match tools {
-                Some(state) => match (state.fixture, state.sigil) {
-                    (Some(index), _) => crate::sim::fixture_names(catalog)
-                        .get(index)
-                        .map(|id| format!("spell {id}"))
-                        .unwrap_or_else(|| "spell (out of range)".to_string()),
-                    (None, Some(index)) => crate::sim::sigil_names(catalog)
-                        .get(index)
-                        .map(|id| format!("sigil {}", id.as_str()))
-                        .unwrap_or_else(|| "sigil (out of range)".to_string()),
-                    // The real count. This said `0` from a placeholder I
-                    // never came back to, which made the recognizer look
-                    // permanently empty while it was busy naming things.
-                    (None, None) => format!(
-                        "nothing forced - the drawing speaks, over {} known shape(s)",
-                        reading.shapes.len()
-                    ),
-                },
-                None => "-".to_string(),
-            },
+            // No override left to report. The panel's "treat this ring as
+            // fire" buttons are gone, so the only thing that can name a mark is
+            // the recogniser — which is what `only_traced` is about.
+            Some(_) => {
+                let traced = reading.traced_sigils();
+                format!(
+                    "the drawing speaks, over {} shape(s){} | traced sigils: {}",
+                    reading.shapes.len(),
+                    match tools.is_none_or(|state| state.only_traced) {
+                        true => " (traced only)",
+                        false => " (built-ins allowed)",
+                    },
+                    match traced.is_empty() {
+                        true => "none yet - press record".to_string(),
+                        false => traced.join(", "),
+                    },
+                )
+            }
         },
         match tools.map(|state| state.pour) {
             Some(which) => crate::sim::POURABLE
@@ -1603,109 +1611,6 @@ impl Default for Lore {
     }
 }
 
-/// Every recorded rune the recogniser can match ink against.
-///
-/// Two sources, and the split is the point. `templates.ron` is the catalogue —
-/// traced, named against `sigils.ron`, and baked into the binary. It ships
-/// empty (§2: an honest hole beats a plausible guess), so on a fresh build the
-/// board has nothing to rank and says so.
-///
-/// `recorded-gesture.ron` is the scratch file the `record` button writes, read
-/// off disk whenever it changes. That closes the loop the recogniser has been
-/// waiting on since M4.8: trace a shape, press record, and it is being scored
-/// against your ink a second later without a rebuild.
-#[derive(Resource)]
-struct Runes {
-    shipped: Vec<magic_core::Recorded>,
-    live: Vec<magic_core::Recorded>,
-    /// What happened to `live` last time it was read — a count, or why not.
-    live_note: String,
-    /// Last modification time seen. The outer `Option` means "never looked",
-    /// which is not the same as "looked and the file was absent".
-    stamp: Option<Option<std::time::SystemTime>>,
-}
-
-impl Default for Runes {
-    fn default() -> Self {
-        Runes {
-            shipped: magic_core::templates::parse(
-                "templates.ron",
-                include_str!("../../../crates/magic-core/the-magic-assets/templates.ron"),
-                stroke::MATCH_POINTS,
-            )
-            .unwrap_or_default(),
-            live: Vec::new(),
-            live_note: "not written yet".to_string(),
-            stamp: None,
-        }
-    }
-}
-
-impl Runes {
-    /// Every rune, catalogue first, tagged with where it came from.
-    fn all(&self) -> Vec<(&'static str, &magic_core::Recorded)> {
-        self.shipped
-            .iter()
-            .map(|rune| ("traced", rune))
-            .chain(self.live.iter().map(|rune| ("live", rune)))
-            .collect()
-    }
-}
-
-/// Rereads the recorder's file whenever it changes.
-///
-/// A stat call once a frame rather than a filesystem watcher: this is a debug
-/// tool, the file is one we wrote ourselves, and a watcher is a dependency and
-/// a thread for something one syscall already answers.
-fn reload_runes(mut runes: ResMut<Runes>) {
-    // The browser has no files to watch. The built-ins are compiled in, so the
-    // web build still recognises everything the desktop one does — it just
-    // cannot pick up a rune traced since it started.
-    #[cfg(target_arch = "wasm32")]
-    {
-        runes.live_note = "the browser has no files to watch".to_string();
-        return;
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    reload_from_disk(&mut runes);
-}
-
-/// The desktop half: watch the recorder's file and reread it when it changes.
-#[cfg(not(target_arch = "wasm32"))]
-fn reload_from_disk(runes: &mut Runes) {
-    let stamp = std::fs::metadata(crate::ui::record::OUTFILE)
-        .and_then(|meta| meta.modified())
-        .ok();
-    if runes.stamp == Some(stamp) {
-        return;
-    }
-    runes.stamp = Some(stamp);
-
-    let Ok(source) = std::fs::read_to_string(crate::ui::record::OUTFILE) else {
-        runes.live.clear();
-        runes.live_note = "not written yet".to_string();
-        return;
-    };
-
-    match magic_core::templates::parse("recorded-gesture.ron", &source, stroke::MATCH_POINTS) {
-        Ok(found) => {
-            runes.live_note = format!("{} rune(s)", found.len());
-            runes.live = found;
-        }
-        Err(_) => {
-            runes.live.clear();
-            // Deliberately not the parser's own message. The overwhelmingly
-            // likely cause is a file the *older* recorder wrote — a bare
-            // fragment with no `version` line — and pressing record again
-            // rewrites it in the format that loads. A RON error at 15:1 tells
-            // nobody that, and it is long enough to blow the panel's width out
-            // past the edge of the window, which is how this was found.
-            runes.live_note = "unreadable - press record to rewrite it".to_string();
-        }
-    }
-}
-
 /// The recogniser board: every rune scored against the ink in the ring.
 ///
 /// The circle fitter gets an overlay showing what it measured; this is the same
@@ -1722,7 +1627,6 @@ fn update_matches(
     camera: Single<(&Camera, &GlobalTransform)>,
     tools: Option<Res<ToolState>>,
     lore: Res<Lore>,
-    runes: Res<Runes>,
     mut panel: Single<&mut Text2d, With<MatchLine>>,
     reading: Res<Reading>,
 ) {
@@ -1731,7 +1635,7 @@ fn update_matches(
         return;
     }
 
-    let all = runes.all();
+    let all: Vec<(&'static str, &magic_core::Recorded)> = reading.catalogued().collect();
     let vocabulary = lore.0.as_ref().map_or_else(
         || "catalogue failed to load".to_string(),
         |catalog| {
@@ -1747,17 +1651,27 @@ fn update_matches(
     // Every line is kept short on purpose. The block is right-anchored, so its
     // width is set by its longest line — one long value and the whole panel
     // slides off the left edge of the window.
+    // Counted off the one shared list rather than off a private copy. There
+    // used to be two, and they disagreed — see `Reading::shapes`.
+    let mut tally = (0usize, 0usize, 0usize);
+    for (source, _) in &all {
+        match *source {
+            "recorded" => tally.0 += 1,
+            "traced" => tally.1 += 1,
+            _ => tally.2 += 1,
+        }
+    }
+
     let mut out = format!(
         "-- recogniser --  $P, {} pts, rotation kept\n\
-         templates.ron    {}\n\
-         recorded         {}\n\
+         source           {}\n\
+         shapes           {} recorded, {} in templates.ron, {} built-in\n\
          catalogue        {vocabulary}\n",
         stroke::MATCH_POINTS,
-        match runes.shipped.len() {
-            0 => "empty on purpose".to_string(),
-            n => format!("{n} traced"),
-        },
-        runes.live_note,
+        reading.note,
+        tally.0,
+        tally.1,
+        tally.2,
     );
 
     let rings = &reading.rings;
@@ -1891,7 +1805,7 @@ fn spell_report(
     };
 
     format!(
-        "\n-- spell --\n         driver     {:?}   firing {:?}   fires {}\n         strength   {:.2}   intensity {:.2}   x{:.2} linked   scale r{:.0}\n         shape      {} sign(s)   embed {:.2}   {}   region {:?}\n         pad        nested in {}   linked to {:?}\n         balance    lean {:.2} -> {:.0}deg   power {:.1}   spin {:.2} / reach {:.2}\n         needs      {}\n         warnings   {warnings}",
+        "\n-- spell --\n         driver     {:?}   firing {:?}   fires {}\n         strength   {:.2}   intensity {:.2}   x{:.2} linked   scale r{:.0}\n         shape      {} sign(s)   embed {:.2}   {}   region {:?}\n         pad        nested in {}   linked to {:?}\n         balance    lean {:.2} -> {:.0}deg   power {:.1}   spin {:.2} / reach {:.2}\n         focus      {}\n         needs      {}\n         warnings   {warnings}",
         spell.driver,
         spell.firing,
         spell.fires(),
@@ -1919,6 +1833,41 @@ fn spell_report(
         spell.balance.power,
         spell.spin.spin,
         spell.spin.reach,
+        // Where the signs *aim*, as against which way they push. Four arrows at
+        // the middle cancel to zero lean — `balance` is right that the spell
+        // goes nowhere, and cannot say that all four are pushing at one point.
+        // That is the whole difference between a water orb and a fountain.
+        {
+            let focus = &spell.focus;
+            match focus.convergence {
+                magic_core::arrangement::Convergence::Unaimed => match focus.aimed {
+                    0 => "no sign steers this seal - nothing aims anywhere".to_string(),
+                    _ => "one steering sign - nothing for it to meet".to_string(),
+                },
+                magic_core::arrangement::Convergence::Parallel => format!(
+                    "{} sign(s) all pointing one way - a beam, no focal point",
+                    focus.aimed
+                ),
+                other => format!(
+                    "{} {} of the ring, {:.0}px off centre, {:.0}% tight  ({})",
+                    match other {
+                        magic_core::arrangement::Convergence::Converging => "GATHERS at",
+                        magic_core::arrangement::Convergence::Diverging => "SPREADS from",
+                        _ => "meets on",
+                    },
+                    match focus.offset() < spell.scale * 0.15 {
+                        true => "the centre",
+                        false => "a point inside",
+                    },
+                    focus.offset(),
+                    focus.tightness(spell.scale) * 100.0,
+                    match other.as_region() {
+                        Some(pattern) => format!("canon {pattern:?}"),
+                        None => "no canon case".to_string(),
+                    },
+                ),
+            }
+        },
         match &spell.demand {
             Some(d) if d.must_find => format!("must find {:?}", d.substance),
             Some(d) => format!("may create {:?}", d.substance),
@@ -2163,6 +2112,7 @@ fn update_ring_labels(
         ));
     }
 
+    let only_traced = tools.as_deref().is_none_or(|state| state.only_traced);
     for (_, slot, mut text, mut color, mut transform) in &mut labels {
         let Some(ring) = rings.get(slot.0) else {
             continue;
@@ -2188,7 +2138,17 @@ fn update_ring_labels(
         let makes = reading
             .spell(slot.0)
             .map(|spell| match (&spell.driver, &spell.demand) {
-                (magic_core::Driver::Discharge, _) => "DISCHARGE - a blast".to_string(),
+                // The caption over the seal is the closest thing to the
+                // drawing, so it is where a refusal has to appear. It used to
+                // say "DISCHARGE - a blast" for a ring the app was quietly
+                // declining to fire, which is the caption confidently naming a
+                // spell that was never going to happen.
+                (magic_core::Driver::Discharge, _) => {
+                    match crate::sim::refuses(spell, only_traced) {
+                        Some(why) => format!("NOT CAST - {why}"),
+                        None => "DISCHARGE - a blast".to_string(),
+                    }
+                }
                 (driver, Some(demand)) if demand.substance.is_empty() => {
                     // Guidance, obliviation and doorways act on no substance at
                     // all, and `MOVES ` with nothing after it is a sentence
@@ -2589,7 +2549,6 @@ fn draw_fits(
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform)>,
     tools: Option<Res<ToolState>>,
-    runes: Res<Runes>,
     mut gizmos: Gizmos<DebugGizmos>,
     reading: Res<Reading>,
 ) {
@@ -2652,7 +2611,7 @@ fn draw_fits(
         if let Some(cloud) =
             recognizer::normalize(&subject_ink(&pad, candidate), stroke::MATCH_POINTS)
         {
-            let all = runes.all();
+            let all: Vec<(&'static str, &magic_core::Recorded)> = reading.catalogued().collect();
             let shapes: Vec<recognizer::Template> =
                 all.iter().map(|(_, rune)| rune.template.clone()).collect();
             let best =

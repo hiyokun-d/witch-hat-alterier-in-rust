@@ -55,6 +55,18 @@ pub struct CastRules {
     /// while, and rule 8 has a neat seal "long-lasting". A spell that fires
     /// once and stops is a firework, not a fountain.
     pub channel_seconds: f32,
+    /// The shortest and longest a channel may run, whatever the seal says.
+    ///
+    /// **Ours** (§2.6), and a floor rather than only a ceiling. Canon has rule
+    /// 8's neat seal "long-lasting" and gives no seconds, so the numbers are a
+    /// choice — but the *floor* is the interesting half: a spell that raises a
+    /// splash and stops before you have looked at it is a spell you cannot
+    /// learn anything from, however faithfully it was graded. A rough seal
+    /// should be visibly worse than a neat one and still be a spell.
+    ///
+    /// A `Fleeting` seal is the one exception and keeps its short life: canon's
+    /// own word for a ring too rough to hold has to mean something.
+    pub channel_bounds: (f32, f32),
     /// Seconds an `Active` seal's parcels last, per unit of strength.
     pub life_active: f32,
     /// Seconds a `Fleeting` seal's last. Canon's word for a ring too rough to
@@ -82,7 +94,8 @@ impl Default for CastRules {
             max_parcels: 64,
             reach: 3.0,
             reference_radius: 140.0,
-            channel_seconds: 4.0,
+            channel_seconds: 20.0,
+            channel_bounds: (15.0, 45.0),
             life_active: 6.0,
             life_fleeting: 0.6,
             blast: 400.0,
@@ -150,11 +163,15 @@ pub fn channel_for(spell: &Spell, rules: &CastRules) -> f32 {
         return 0.0;
     }
     let craft = spell.quality.clamp(0.1, 1.0);
-    let base = match spell.firing {
-        Firing::Fleeting => rules.channel_seconds * 0.2,
-        _ => rules.channel_seconds,
-    };
-    base * craft * spell.strength().clamp(0.1, 4.0)
+    let wanted = rules.channel_seconds * craft * spell.strength().clamp(0.1, 4.0);
+    let (floor, ceiling) = rules.channel_bounds;
+    match spell.firing {
+        // Fleeting is exempt from the floor. Canon's word for a ring too rough
+        // to hold has to cost something, and a fifth of the *floor* is still a
+        // spell you can see.
+        Firing::Fleeting => (wanted * 0.2).min(ceiling),
+        _ => wanted.clamp(floor.min(ceiling), ceiling),
+    }
 }
 
 /// Casts `spell` centred on `at`, into `field`.

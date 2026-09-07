@@ -14,11 +14,11 @@
 //! bug, not a taste, so both are 60Hz.
 
 use bevy::prelude::*;
-use magic_core::catalog::Slot;
+use magic_core::compiler::{Driver, Spell, Warning};
 use magic_core::sim::{
     CastOutcome, Field, Materials, Parcel, ReactionBook, Sim, SubstanceId, Vec2 as SimVec2,
 };
-use magic_core::{Catalog, CompileRules, Glyph, SigilId, Sign, assembly};
+use magic_core::{Catalog, CompileRules, SigilId, assembly};
 
 use crate::InkPad;
 use crate::reading::RULES;
@@ -126,8 +126,7 @@ impl Simulation {
             return "no ring on the pad - nothing to cast".to_string();
         }
 
-        let mut glyphs = assembly::glyphs(&rings, &pad.points, ON_RING_TOLERANCE, &RULES);
-        apply_naming(&mut glyphs, catalog, tools);
+        let glyphs = assembly::glyphs(&rings, &pad.points, ON_RING_TOLERANCE, &RULES);
         let spells = magic_core::compile_all(&glyphs, catalog, &CompileRules::default());
 
         let mut fired = 0;
@@ -135,6 +134,10 @@ impl Simulation {
         let mut notes: Vec<String> = Vec::new();
 
         for (glyph, spell) in glyphs.iter().zip(&spells) {
+            if let Some(why) = refuses(spell, tools.only_traced) {
+                notes.push(why);
+                continue;
+            }
             let center = SimVec2::new(glyph.ring.center().x, glyph.ring.center().y);
             let report = self.sim.cast(spell, center);
             match &report.outcome {
@@ -174,13 +177,42 @@ impl Simulation {
     }
 }
 
-/// Every sigil the catalogue knows, in its own order.
+/// Why a compiled seal will not be cast, or `None` if it will.
 ///
-/// Collected fresh rather than cached: the panel cycles through it a few times
-/// a session, and a cached list is one more thing that can disagree with the
-/// data it came from.
-pub fn sigil_names(catalog: &Catalog) -> Vec<SigilId> {
-    catalog.sigils().map(|def| def.id.clone()).collect()
+/// **A tool policy, not a canon rule, and the distinction is load-bearing.**
+/// Canon rule 9 is unambiguous — "if a ring is the only thing drawn, the spell
+/// generated will simply be a rapid discharge of energy, i.e. an explosion" —
+/// and `compiler.rs` still says exactly that. Core is not changed and the
+/// discharge tests all still pass. What changed is that *this app* declines to
+/// fire one.
+///
+/// The reason is the workshop rather than the fiction. Every ring that holds
+/// ink the recogniser cannot read compiles to the same discharge as an empty
+/// one, so while the vocabulary is four runes deep, "blast" is what almost
+/// every misread drawing does — and a spell that goes off when you have drawn
+/// something it could not understand teaches you nothing and buries the thing
+/// you were trying to see. A seal fires when it was *understood*.
+///
+/// Turning `only_traced` off puts the discharge back, which is the honest way
+/// to hold a canon rule and a working tool at the same time.
+pub fn refuses(spell: &Spell, only_traced: bool) -> Option<String> {
+    if !only_traced {
+        return None;
+    }
+    match spell.driver {
+        Driver::Discharge => Some(
+            match spell.warnings.iter().find_map(|warning| match warning {
+                Warning::Unreadable { strokes } => Some(*strokes),
+                _ => None,
+            }) {
+                Some(strokes) => {
+                    format!("{strokes} mark(s) in this ring are not a traced rune - nothing cast")
+                }
+                None => "bare ring - blast is off, put a traced sigil in it".to_string(),
+            },
+        ),
+        _ => None,
+    }
 }
 
 /// Everything that can be traced, sigils first and then signs.
@@ -199,11 +231,6 @@ pub fn traceable(catalog: &Catalog) -> Vec<(String, &'static str)> {
                 .map(|def| (def.id.as_str().to_string(), "Sign")),
         )
         .collect()
-}
-
-/// Every canon spell fixture `spells.ron` records.
-pub fn fixture_names(catalog: &Catalog) -> Vec<String> {
-    catalog.spells().map(|def| def.id.clone()).collect()
 }
 
 /// One line saying what a sigil actually does, from the catalogue.
@@ -264,99 +291,6 @@ pub fn describe_fixture(catalog: &Catalog, id: &str) -> String {
     )
 }
 
-/// Names the seals on the pad, because nothing else can yet.
-///
-/// **A testing override, and it must stay one.** `templates.ron` ships empty
-/// because the rune shapes belong to the manga and §2 forbids inventing them,
-/// so the recognizer names nothing and every seal compiles to rule 9's
-/// discharge. That leaves the entire compiler unreachable from the app. Saying
-/// "treat this ring as fire" is not a claim about what a fire sigil looks like;
-/// it is the difference between a compiler you can use and one you can only
-/// read tests about.
-///
-/// Returns what it applied, for the hint line.
-pub fn apply_naming(glyphs: &mut [Glyph], catalog: &Catalog, tools: &ToolState) -> Option<String> {
-    if let Some(index) = tools.fixture {
-        let fixtures: Vec<_> = catalog.spells().cloned().collect();
-        let def = fixtures.get(index)?;
-
-        let mut applied = 0;
-        for glyph in glyphs.iter_mut() {
-            // Only where the drawing said nothing. This was a stomp: a water
-            // sigil drawn by hand and correctly recognised was being relabelled
-            // `fire` because a preset had been pressed some time earlier, and
-            // the seal on the paper disagreed with the caption over it.
-            //
-            // The override is a *fallback* for ink the recognizer cannot read,
-            // which is what it was for when `templates.ron` was empty and
-            // nothing could be read at all. A seal that names itself outranks
-            // a button pressed ten minutes ago.
-            if glyph.sigil.is_some() || !glyph.signs.is_empty() {
-                continue;
-            }
-            glyph.sigil = def.sigil.clone();
-            glyph.signs = fixture_signs(def, glyph.ring.radius());
-            // A named seal is a read seal. Leaving the count would have the
-            // compiler warn about marks it has just been told the meaning of.
-            glyph.unnamed = 0;
-            applied += 1;
-        }
-        return Some(match applied {
-            0 => format!("spell {} - not applied, the drawing named itself", def.id),
-            _ => format!("spell {}: {}", def.id, def.effect),
-        });
-    }
-
-    let index = tools.sigil?;
-    let names = sigil_names(catalog);
-    let id = names.get(index)?;
-    for glyph in glyphs.iter_mut() {
-        // Same rule: a drawn sigil wins over a chosen one.
-        if glyph.sigil.is_some() {
-            continue;
-        }
-        glyph.sigil = Some(id.clone());
-        glyph.unnamed = glyph.unnamed.saturating_sub(1);
-    }
-    Some(format!("sigil {}", id.as_str()))
-}
-
-/// The signs a fixture calls for, spread evenly around its ring.
-///
-/// Canon constrains *which* signs a spell has and roughly where (`Slot`), never
-/// the exact angles, so even spacing is the honest reading: §2.4's own advice is
-/// bilateral symmetry, and evenly spaced signs of equal size sum to zero drift,
-/// which is what canon says a balanced seal does.
-fn fixture_signs(def: &magic_core::catalog::SpellDef, radius: f32) -> Vec<Sign> {
-    let mut wanted: Vec<(magic_core::SignId, Slot)> = Vec::new();
-    for (id, slot) in &def.signs {
-        let count = def.sign_counts.get(id).copied().unwrap_or(1).max(1);
-        for _ in 0..count {
-            wanted.push((id.clone(), *slot));
-        }
-    }
-
-    let total = wanted.len().max(1) as f32;
-    wanted
-        .iter()
-        .enumerate()
-        .map(|(i, (id, slot))| {
-            let placement = std::f32::consts::TAU * i as f32 / total;
-            Sign {
-                kind: id.clone(),
-                placement,
-                // Radial: no tilt, so `spin` reads zero and the seal is
-                // balanced unless the fixture's own signs make it otherwise.
-                orientation: placement,
-                // A tenth of the ring, in the ring's own units, so intensity
-                // and balance stay comparable between fixtures.
-                size: (radius * 0.1).max(1.0),
-                reversed: def.reversed_signs.contains(id) || matches!(slot, Slot::Center) && false,
-            }
-        })
-        .collect()
-}
-
 /// How many cells apart the ambient air parcels sit, and how heavy each is.
 ///
 /// **The room has air in it.** This was the bug behind "nothing happens when I
@@ -380,104 +314,125 @@ const AIR_MASS: f32 = 0.5;
 /// The open ones are canon rule 2 made into a tool: "leaving a gap prepares a
 /// spell to be fired later by closing it". They land inert, and the last stroke
 /// is yours — which is the moment the whole engine is built around and the one
-/// thing a finished preset can never show you.
-pub const PRESETS: &[(&str, &str, usize, bool, bool)] = &[
-    (
-        "flamespout",
-        "fire, four columns - a column of flame, straight up",
-        4,
-        false,
-        false,
-    ),
-    (
-        "flamespout",
-        "the same seal, PREPARED - close the gap yourself",
-        4,
-        true,
-        false,
-    ),
-    (
-        "watershot_seal",
-        "water, four columns - the first spell Coco learned",
-        4,
-        false,
-        false,
-    ),
-    (
-        "watershot_seal",
-        "watershot, PREPARED - draw the last stroke",
-        4,
-        true,
-        false,
-    ),
+/// One ready-made seal the panel can lay down.
+///
+/// A struct now rather than a five-field tuple, because it grew a sixth: which
+/// **rune** goes in the middle. That was the fix for the thing that made a
+/// preset dishonest — it used to stamp a generic mark and then *force* the
+/// spell's name, which meant the one button guaranteed to produce a working
+/// spell was also the one button that bypassed the recogniser entirely.
+///
+/// Every entry names a sigil, and `preset` refuses to place one whose sigil has
+/// not been traced. A preset you cannot read is a preset that would fire
+/// something you did not draw.
+#[derive(Debug, Clone, Copy)]
+pub struct Preset {
+    /// The fixture in `spells.ron` this is built after, for the blurb.
+    pub id: &'static str,
+    /// The rune that goes in the middle. Must be traced or the preset is
+    /// refused.
+    pub sigil: &'static str,
+    pub blurb: &'static str,
+    /// How many keystones ring it.
+    pub signs: usize,
+    /// Canon rule 2: left with a gap, prepared rather than fired.
+    pub open: bool,
+    /// Canon's `AllInward` — arrows at the middle rather than away from it.
+    pub inward: bool,
+}
+
+/// Every seal `preset` can lay down.
+///
+/// Only the five elemental sigils, because those are the five a person can
+/// realistically trace and every one of them does something visible. The list
+/// used to carry `everlasting`, built on the repetition sigil — a fine spell
+/// and one nobody has a rune for, so it stamped a seal that could only ever
+/// compile to a discharge.
+pub const PRESETS: &[Preset] = &[
+    Preset {
+        id: "flamespout",
+        sigil: "fire",
+        blurb: "fire + four columns - a column of flame, straight up",
+        signs: 4,
+        open: false,
+        inward: false,
+    },
+    Preset {
+        id: "flamespout",
+        sigil: "fire",
+        blurb: "the same seal, PREPARED - close the gap yourself",
+        signs: 4,
+        open: true,
+        inward: false,
+    },
+    Preset {
+        id: "fire_shot",
+        sigil: "fire",
+        blurb: "fire + three signs - thrown the way they point",
+        signs: 3,
+        open: false,
+        inward: false,
+    },
     // Four arrows pointing at the middle. Canon's `AllInward`: "manifests only
     // inside the ring" — which is exactly how a ball of water differs from a
     // fountain of it. Same sigil, arrows reversed, opposite spell, and the
     // arrangement is doing all of the work.
-    (
-        "water_orb",
-        "water + four arrows pointing IN - held as a ball",
-        4,
-        false,
-        true,
-    ),
-    (
-        "water_orb",
-        "the orb, PREPARED - close it and it forms",
-        4,
-        true,
-        true,
-    ),
-    (
-        "raincleaver",
-        "water, many signs - Qifrey's cutting spell",
-        8,
-        false,
-        false,
-    ),
-    (
-        "everlasting",
-        "repetition - holds what it raises where it was raised",
-        3,
-        false,
-        false,
-    ),
-    (
-        "windrider",
-        "wind - finds air, or does nothing at all",
-        4,
-        false,
-        false,
-    ),
-    ("mistveil", "water as a cloud", 6, false, false),
-    (
-        "fire_shot",
-        "fire + region - thrown the way the signs point",
-        3,
-        false,
-        false,
-    ),
-    (
-        "wind_gust",
-        "wind - moves the air that is there, if there is any",
-        4,
-        false,
-        false,
-    ),
-    (
-        "earth_wall",
-        "earth - gathers stone and sand and packs it rigid",
-        4,
-        false,
-        false,
-    ),
-    (
-        "lightfall",
-        "light - a lamp above the seal, not a beam",
-        4,
-        false,
-        false,
-    ),
+    Preset {
+        id: "water_orb",
+        sigil: "water",
+        blurb: "water + four arrows pointing IN - held as a ball",
+        signs: 4,
+        open: false,
+        inward: true,
+    },
+    Preset {
+        id: "water_orb",
+        sigil: "water",
+        blurb: "the orb, PREPARED - close it and it forms",
+        signs: 4,
+        open: true,
+        inward: true,
+    },
+    Preset {
+        id: "raincleaver",
+        sigil: "water",
+        blurb: "water, eight signs - Qifrey's cutting spell",
+        signs: 8,
+        open: false,
+        inward: false,
+    },
+    Preset {
+        id: "mistveil",
+        sigil: "water",
+        blurb: "water as a cloud - six signs, spread wide",
+        signs: 6,
+        open: false,
+        inward: false,
+    },
+    Preset {
+        id: "windrider",
+        sigil: "wind",
+        blurb: "wind - finds air, or does nothing at all",
+        signs: 4,
+        open: false,
+        inward: false,
+    },
+    Preset {
+        id: "earth_wall",
+        sigil: "earth",
+        blurb: "earth + arrows IN - gathers stone and packs it rigid",
+        signs: 4,
+        open: false,
+        inward: true,
+    },
+    Preset {
+        id: "lightfall",
+        sigil: "light",
+        blurb: "light - a lamp above the seal, not a beam",
+        signs: 4,
+        open: false,
+        inward: false,
+    },
 ];
 
 /// Substances a person can drop by hand, to watch two of them meet.
@@ -495,14 +450,6 @@ pub const POURABLE: &[(&str, f32)] = &[
 ];
 
 impl Simulation {
-    /// The fixture id a preset names, if the catalogue has it.
-    pub fn preset_fixture(&self, which: usize) -> Option<usize> {
-        let (id, _, _, _, _) = PRESETS.get(which)?;
-        fixture_names(self.lore.as_ref()?)
-            .iter()
-            .position(|found| found == id)
-    }
-
     /// Fills the world with still air at room temperature.
     ///
     /// Called at startup and after `empty`, because an empty world is not a
@@ -577,7 +524,7 @@ fn watch_the_pad(pad: Res<InkPad>, tools: Option<Res<ToolState>>, mut world: Res
     // The compile phase borrows the catalogue; the cast phase mutates the
     // world. Scoped so the first is finished before the second begins, rather
     // than cloning a catalogue sixty times a second to dodge the borrow.
-    let (next, fired) = {
+    let (next, fired, refused) = {
         let Some(catalog) = world.lore.as_ref() else {
             return;
         };
@@ -588,23 +535,30 @@ fn watch_the_pad(pad: Res<InkPad>, tools: Option<Res<ToolState>>, mut world: Res
             return;
         }
 
-        let mut glyphs = assembly::glyphs(&rings, &pad.points, ON_RING_TOLERANCE, &RULES);
-        // The panel's naming override, same as the manual path. Without it every
-        // seal is rule 9's discharge — a true answer, and a dull one.
-        if let Some(state) = tools.as_deref() {
-            apply_naming(&mut glyphs, catalog, state);
-        }
+        let glyphs = assembly::glyphs(&rings, &pad.points, ON_RING_TOLERANCE, &RULES);
         let spells = magic_core::compile_all(&glyphs, catalog, &CompileRules::default());
+        let only_traced = tools.as_deref().is_none_or(|state| state.only_traced);
 
         let mut next: Vec<Armed> = Vec::with_capacity(spells.len());
         let mut fired: Vec<(magic_core::Spell, SimVec2)> = Vec::new();
+        let mut refused: Vec<String> = Vec::new();
 
         for (glyph, spell) in glyphs.iter().zip(&spells) {
             let center = SimVec2::new(glyph.ring.center().x, glyph.ring.center().y);
             let radius = glyph.ring.radius();
-            let firing = spell.fires();
+            // **The edge is about the ring, not about the cast.** `fired`
+            // tracks whether the circuit was closed last frame, so a seal that
+            // closes and is then refused has still had its one moment — it does
+            // not re-ask every frame, and re-opening the ring re-arms it.
+            //
+            // Getting this wrong the other way was the bug: a refused seal that
+            // never set the flag would be refused sixty times a second, and a
+            // refusal you cannot read because it is being reprinted is the same
+            // as no refusal at all.
+            let closed = spell.fires();
+            let refusal = refuses(spell, only_traced);
 
-            // Was this seal on the pad last frame, and had it already gone off?
+            // Was this seal on the pad last frame, and had it already closed?
             let before = world
                 .armed
                 .iter()
@@ -615,16 +569,25 @@ fn watch_the_pad(pad: Res<InkPad>, tools: Option<Res<ToolState>>, mut world: Res
                 .map(|seal| seal.fired)
                 .unwrap_or(false);
 
-            if firing && !before {
-                fired.push((spell.clone(), center));
+            if closed && !before {
+                match refusal {
+                    None => fired.push((spell.clone(), center)),
+                    // **Silence was the bug.** A ring that closes and does
+                    // nothing, with nothing on screen saying why, is
+                    // indistinguishable from a ring that closed and the app
+                    // missed it — which is exactly how this was reported:
+                    // "some of the particle won't run even tho the ring is
+                    // closed". The circuit closed. The app declined. Say so.
+                    Some(why) => refused.push(why),
+                }
             }
             next.push(Armed {
                 center,
                 radius,
-                fired: firing,
+                fired: closed,
             });
         }
-        (next, fired)
+        (next, fired, refused)
     };
 
     world.armed = next;
@@ -632,6 +595,11 @@ fn watch_the_pad(pad: Res<InkPad>, tools: Option<Res<ToolState>>, mut world: Res
         let report = world.sim.cast(&spell, center);
         world.last = Some(describe(&report));
         world.running = true;
+    }
+    // After the casts, so a frame that both fired one seal and refused another
+    // leaves the refusal on screen — that is the half you did not expect.
+    if let Some(why) = refused.into_iter().next() {
+        world.last = Some(format!("ring closed, nothing cast - {why}"));
     }
 }
 
@@ -803,3 +771,7 @@ fn advance(mut world: ResMut<Simulation>) {
         world.sim.step();
     }
 }
+
+#[cfg(test)]
+#[path = "tests/sim.rs"]
+mod tests;
