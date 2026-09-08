@@ -27,7 +27,7 @@ fn pad_with(strokes: &[Vec<(f32, f32)>]) -> InkPad {
 
 #[test]
 fn an_empty_pad_records_nothing() {
-    assert!(record(&InkPad::default(), "fire", "Sigil").is_err());
+    assert!(record(&InkPad::default(), &[], "fire", "Sigil").is_err());
 }
 
 #[test]
@@ -40,12 +40,15 @@ fn a_pad_holding_only_a_ring_records_nothing() {
             (120.0 * a.cos(), 120.0 * a.sin())
         })
         .collect();
-    assert!(record(&pad_with(&[ring]), "fire", "Sigil").is_err());
+    // Stroke 0 is the ring, and the caller says so — the recorder no
+    // longer finds rings for itself, because a second ring search is a second
+    // opinion about the same pad.
+    assert!(record(&pad_with(&[ring]), &[0], "fire", "Sigil").is_err());
 }
 
 #[test]
 fn a_single_point_stroke_is_not_a_gesture() {
-    assert!(record(&pad_with(&[vec![(0.0, 0.0)]]), "fire", "Sigil").is_err());
+    assert!(record(&pad_with(&[vec![(0.0, 0.0)]]), &[], "fire", "Sigil").is_err());
 }
 
 /// A stroke shaped enough to normalise: a short arc, ten points.

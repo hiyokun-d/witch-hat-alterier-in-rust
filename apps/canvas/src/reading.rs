@@ -123,6 +123,20 @@ impl Reading {
         self.spells.get(slot)
     }
 
+    /// The strokes that are ring ink, and therefore not a rune.
+    ///
+    /// Only *simple* rings count. A rune with a round part in it — water's
+    /// teardrops, light's diamond — would otherwise have that part quietly
+    /// filed as ring ink, and the shape you saved would not be the shape you
+    /// drew.
+    pub fn ring_strokes(&self) -> Vec<u32> {
+        self.rings
+            .iter()
+            .filter(|ring| ring.is_simple(RULES.simple_tolerance))
+            .flat_map(|ring| ring.strokes.clone())
+            .collect()
+    }
+
     /// Every shape and where it came from, for a readout.
     pub fn catalogued(&self) -> impl Iterator<Item = (&'static str, &Recorded)> {
         self.sources.iter().copied().zip(self.shapes.iter())
@@ -173,6 +187,10 @@ pub fn read_pad(
 
     reading.rings = assembly::find_rings(&pad.points, &search());
     reading.glyphs = assembly::glyphs(&reading.rings, &pad.points, ON_RING_TOLERANCE, &RULES);
+    // Which strokes each ring is actually responsible for. Canon rule 4 puts an
+    // outer ring's spell in the *gap* between it and the ring inside it, so a
+    // nested working must not have its inner sigils named twice.
+    let owned = assembly::owned(&reading.rings, &pad.points, ON_RING_TOLERANCE);
 
     // The step that makes the whole compiler reachable from a drawing: ink
     // becomes a sigil and some signs. `assembly` deliberately names nothing —
@@ -187,8 +205,8 @@ pub fn read_pad(
         shapes,
         ..
     } = &mut *reading;
-    for (glyph, ring) in glyphs.iter_mut().zip(rings.iter()) {
-        naming::name(glyph, ring, &pad.points, shapes, ON_RING_TOLERANCE);
+    for ((glyph, ring), ids) in glyphs.iter_mut().zip(rings.iter()).zip(owned.iter()) {
+        naming::name(glyph, ring, &pad.points, ids, shapes);
     }
 
     let catalog: Option<&Catalog> = lore.as_deref().and_then(|world| world.lore.as_ref());

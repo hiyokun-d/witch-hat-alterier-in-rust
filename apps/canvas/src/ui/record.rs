@@ -41,7 +41,12 @@ pub struct LastRecording(pub Option<String>);
 /// The browser cannot write files, and pretending otherwise is worse than
 /// saying so.
 #[cfg(target_arch = "wasm32")]
-pub fn record(_pad: &InkPad, _id: &str, _kind: &str) -> Result<String, String> {
+pub fn record(
+    _pad: &InkPad,
+    _ring_strokes: &[u32],
+    _id: &str,
+    _kind: &str,
+) -> Result<String, String> {
     Err("recording needs the desktop build - the browser has no files".to_string())
 }
 
@@ -56,7 +61,6 @@ pub use desktop::{OUTFILE, forget, record};
 #[cfg(not(target_arch = "wasm32"))]
 mod desktop {
     use super::*;
-    use magic_core::assembly;
 
     /// Where the runes land, relative to wherever the app was launched from.
     pub const OUTFILE: &str = "recorded-gesture.ron";
@@ -75,22 +79,17 @@ mod desktop {
     /// Rings are excluded on purpose: a ring is the activator, not the rune, and
     /// the recogniser is never asked to identify one — `circle.rs` does that with
     /// geometry instead.
-    fn gestures(pad: &InkPad) -> Result<Vec<Vec<(f32, f32)>>, String> {
+    /// `ring_strokes` is handed in rather than found here, and that matters.
+    ///
+    /// This used to run its own `find_rings` with `RingSearch::default()`,
+    /// whose `join` is 16px against the shell's 20px — so the recorder could
+    /// disagree with the rest of the app about whether a stroke was ring ink,
+    /// and quietly save a rune with a piece missing or a ring stroke welded on.
+    /// One reading of the pad, shared (`reading.rs`), or the two drift.
+    fn gestures(pad: &InkPad, ring_strokes: &[u32]) -> Result<Vec<Vec<(f32, f32)>>, String> {
         if pad.points.is_empty() {
             return Err("nothing on the pad".to_string());
         }
-
-        // Rings are excluded because a ring is the activator, not the rune —
-        // but only ink that is *actually* a ring. A rune with a round part in
-        // it (water's teardrops, light's diamond) would otherwise have that
-        // part silently dropped from its own recording, and the shape you saved
-        // would not be the shape you drew.
-        let rings = assembly::find_rings(&pad.points, &assembly::RingSearch::default());
-        let ring_strokes: Vec<u32> = rings
-            .iter()
-            .filter(|ring| ring.is_simple(crate::reading::RULES.simple_tolerance))
-            .flat_map(|r| r.strokes.clone())
-            .collect();
 
         let mut strokes: Vec<Vec<(f32, f32)>> = Vec::new();
         let mut current = Vec::new();
@@ -196,8 +195,13 @@ mod desktop {
     /// which meant every recording ended in a text editor — and the one workflow
     /// §2 actually asks for is a person tracing the manga's shapes into the app.
     /// Making that end in the app is the difference between a feature and a chore.
-    pub fn record(pad: &InkPad, id: &str, kind: &str) -> Result<String, String> {
-        let strokes = gestures(pad)?;
+    pub fn record(
+        pad: &InkPad,
+        ring_strokes: &[u32],
+        id: &str,
+        kind: &str,
+    ) -> Result<String, String> {
+        let strokes = gestures(pad, ring_strokes)?;
 
         let existing = std::fs::read_to_string(OUTFILE).unwrap_or_default();
         let kept = match carve(&existing) {

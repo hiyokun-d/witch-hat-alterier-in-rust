@@ -141,6 +141,10 @@ impl Sim {
         // Summon, then move: a parcel raised this tick should be carried by
         // this tick's physics rather than hanging still for a frame.
         self.pour_channels();
+        // Before motion, so a parcel is pulled toward the focus and *then*
+        // moved by it. Pulling after would apply this tick's force to next
+        // tick's position, which reads as a lag on the orb.
+        self.hold_channels();
         step(&mut self.field, &self.rules, &self.materials, self.ticks);
         self.last_reaction = react(&mut self.field, &self.reactions, self.rules.dt);
         // Every reaction is something a person watching would name, so it gets
@@ -221,6 +225,15 @@ impl Sim {
         trickle.base_parcels = 1;
         trickle.parcels_per_sign = 0;
 
+        // Walked round so the drops do not all land on one spot. `cast` places
+        // by slot and a channel casts one parcel a tick, so slot is always zero
+        // — without this a gathering seal poured a thin vertical stream through
+        // the middle of its own ring instead of filling it. The turn is an
+        // irrational fraction of a circle so the stream never falls into a
+        // short repeating pattern, and it is a function of the tick count, so
+        // §4.3 still holds.
+        trickle.phase = self.ticks as f32 * 2.399_963;
+
         let running = std::mem::take(&mut self.channels);
         self.channels = running
             .into_iter()
@@ -239,6 +252,110 @@ impl Sim {
     /// invents matter or one that loses it, and neither is what happened.
     pub fn prop_mass(&self) -> f32 {
         self.props.iter().map(|prop| prop.standing()).sum()
+    }
+
+    /// Holds a converging spell's substance where its signs aim.
+    ///
+    /// **The other half of the water orb.** `cast::placement` decides where
+    /// parcels *appear*; this decides where they *stay*, and without it the
+    /// first is meaningless — fire rises out of the ring within a second and
+    /// water falls out of the bottom of it.
+    ///
+    /// Only converging spells pull. A diverging one is a fountain and a
+    /// parallel one is a beam, and dragging either back to a point would undo
+    /// the arrangement the person drew.
+    ///
+    /// Deterministic (§4.3): channels in a `Vec` walked in slice order, and the
+    /// force on a parcel depends only on where it is, never on what was already
+    /// applied to it this tick.
+    fn hold_channels(&mut self) {
+        use crate::arrangement::Convergence;
+
+        let dt = self.rules.dt;
+        if dt <= 0.0 || self.channels.is_empty() {
+            return;
+        }
+
+        for open in &self.channels {
+            let focus = &open.spell.focus;
+            if focus.convergence != Convergence::Converging {
+                continue;
+            }
+            let Some(demand) = open.spell.demand.as_ref() else {
+                continue;
+            };
+            let strength = open.spell.strength();
+            if strength <= 0.0 {
+                continue;
+            }
+
+            // Where the signs point, in the world. `Focus::at` is measured from
+            // the ring's centre and `Channel::at` is where that centre sits.
+            let held = open.at + Vec2::new(focus.at.0, focus.at.1);
+            // How far the seal reaches. Beyond its own ring a spell is not
+            // holding anything — it would otherwise haul in a puddle from
+            // across the paper, which no reading of canon supports.
+            let reach = open.spell.scale.max(1.0);
+            // **The spell carries the weight** (§2.3: levitation "floats the
+            // target"), and only then shapes what is floating. A spring alone
+            // cannot hold a ball against a constant, and trying was the bug.
+            let carried = self.rules.gravity * (self.cast_rules.suspend.clamp(0.0, 1.0) * dt);
+            // Floored, because a seal with a small sigil is a *weak* spell and
+            // not a broken one: it should gather loosely rather than not at all.
+            let pull = self.cast_rules.gather * strength.max(0.25) * dt;
+            let damping = (self.cast_rules.gather_damping * dt).clamp(0.0, 1.0);
+
+            for parcel in self.field.parcels_mut() {
+                if !demand
+                    .substance
+                    .iter()
+                    .any(|name| name.as_str() == parcel.substance.as_str())
+                {
+                    continue;
+                }
+                let toward = held - parcel.at;
+                let away = toward.length();
+                if away > reach || away <= f32::EPSILON {
+                    continue;
+                }
+                // A plain spring: acceleration proportional to displacement, so
+                // the far edge is pulled hardest and the middle is left alone.
+                // That is what fills a sphere rather than packing everything
+                // onto one point, and it is why the orb *sags* — gravity wins
+                // wherever the displacement is small enough, which is exactly
+                // how a held ball of water should sit.
+                //
+                // The first version divided by `reach` as well, which made the
+                // pull weakest precisely where it had to be strongest.
+                parcel.velocity = parcel.velocity - carried;
+                parcel.velocity += toward * pull;
+                parcel.velocity = parcel.velocity * (1.0 - damping);
+            }
+        }
+    }
+
+    /// Nudges whatever is near a point — the pointer, reaching into the world.
+    ///
+    /// **Ours entirely** (§2.6), and deliberately weak. Canon has no way for a
+    /// person to touch a spell that is already running, so this is a liberty;
+    /// making it gentle is what keeps it a liberty rather than a second magic
+    /// system. It pushes what is already there and creates nothing, which is
+    /// the same rule §3.2 puts on a discharge.
+    pub fn stir(&mut self, at: Vec2, radius: f32, push: Vec2) {
+        if radius <= 0.0 || !push.is_finite() {
+            return;
+        }
+        for parcel in self.field.parcels_mut() {
+            let toward = parcel.at - at;
+            let away = toward.length();
+            if away > radius {
+                continue;
+            }
+            // Strongest under the pointer and nothing at the edge, so there is
+            // no line where the effect stops.
+            let falloff = 1.0 - away / radius;
+            parcel.velocity += push * falloff;
+        }
     }
 
     pub fn reset(&mut self) {

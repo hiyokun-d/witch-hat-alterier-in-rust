@@ -548,7 +548,7 @@ pub fn draw(
         // no help at all when the question is which seal you are about to lay
         // down — and that is the moment you are hovering it.
         Some(Slot::Button(index))
-            if Some(index) == tool_named("preset") || Some(index) == tool_named("preset >") =>
+            if Some(index) == tool_named("seal") || Some(index) == tool_named("seal >") =>
         {
             match crate::sim::PRESETS.get(tools.preset) {
                 Some(preset) => format!(

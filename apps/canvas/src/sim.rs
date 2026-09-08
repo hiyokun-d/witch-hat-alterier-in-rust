@@ -18,10 +18,9 @@ use magic_core::compiler::{Driver, Spell, Warning};
 use magic_core::sim::{
     CastOutcome, Field, Materials, Parcel, ReactionBook, Sim, SubstanceId, Vec2 as SimVec2,
 };
-use magic_core::{Catalog, CompileRules, SigilId, assembly};
+use magic_core::{Catalog, SigilId};
 
-use crate::InkPad;
-use crate::reading::RULES;
+use crate::reading::Reading;
 use crate::ui::ToolState;
 
 /// How wide the world is, in cells, and how big a cell is in pixels.
@@ -31,10 +30,6 @@ use crate::ui::ToolState;
 /// determinism argument as the fixed timestep.
 const CELLS_ACROSS: usize = 48;
 const CELL_SIZE: f32 = 24.0;
-
-/// How close a stroke has to come to a ring to count as touching it. Pixels, so
-/// it belongs to the shell (§4.4's units rule).
-const ON_RING_TOLERANCE: f32 = crate::INK_WIDTH * 2.5;
 
 /// A seal the watcher has already fired, so it does not fire again every frame.
 ///
@@ -116,24 +111,22 @@ impl Simulation {
     /// `compile_all` rather than `compile`, because canon rules 4, 5 and 6 are
     /// questions about several glyphs at once and one seal can never answer
     /// them about itself.
-    pub fn cast_pad(&mut self, pad: &InkPad, tools: &ToolState) -> String {
-        let Some(catalog) = self.lore.as_ref() else {
+    pub fn cast_pad(&mut self, reading: &Reading, tools: &ToolState) -> String {
+        if self.lore.is_none() {
             return "catalogue failed to load".to_string();
-        };
-
-        let rings = assembly::find_rings(&pad.points, &assembly::RingSearch::default());
-        if rings.is_empty() {
+        }
+        if reading.rings.is_empty() {
             return "no ring on the pad - nothing to cast".to_string();
         }
 
-        let glyphs = assembly::glyphs(&rings, &pad.points, ON_RING_TOLERANCE, &RULES);
-        let spells = magic_core::compile_all(&glyphs, catalog, &CompileRules::default());
+        let glyphs = &reading.glyphs;
+        let spells = &reading.spells;
 
         let mut fired = 0;
         let mut spawned = 0;
         let mut notes: Vec<String> = Vec::new();
 
-        for (glyph, spell) in glyphs.iter().zip(&spells) {
+        for (glyph, spell) in glyphs.iter().zip(spells.iter()) {
             if let Some(why) = refuses(spell, tools.only_traced) {
                 notes.push(why);
                 continue;
@@ -325,6 +318,26 @@ const AIR_MASS: f32 = 0.5;
 /// Every entry names a sigil, and `preset` refuses to place one whose sigil has
 /// not been traced. A preset you cannot read is a preset that would fire
 /// something you did not draw.
+/// A second seal laid inside the same outer ring — canon rule 4.
+///
+/// "Wrap a spell in a second ring and fill the gap between them with another
+/// spell to combine both effects." The outer ring gates both, and the two
+/// elements meet in the world rather than in the grammar: fire below a water
+/// orb does not compile to *steam*, it makes flame and water in one place and
+/// `reactions.ron` does the rest. That is the difference between a system and a
+/// list of special cases, and it is the whole reason M7 exists.
+#[derive(Debug, Clone, Copy)]
+pub struct Nested {
+    pub sigil: &'static str,
+    /// Which keystone rings it. Named for the same reason `sigil` is: the stamp
+    /// draws *this* rune, so what is placed is by construction what is read.
+    pub sign: &'static str,
+    pub signs: usize,
+    pub inward: bool,
+    /// Where its centre sits, as a fraction of the outer ring's radius.
+    pub at: (f32, f32),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Preset {
     /// The fixture in `spells.ron` this is built after, for the blurb.
@@ -332,6 +345,15 @@ pub struct Preset {
     /// The rune that goes in the middle. Must be traced or the preset is
     /// refused.
     pub sigil: &'static str,
+    /// Which keystone rings it.
+    ///
+    /// Named rather than assumed, and that cost a water orb to learn. `seal`
+    /// used to place a generic chevron, which worked only while `column` was
+    /// the nearest thing in the book — the moment a `bend` sample was traced,
+    /// four arrows drawn at the middle came back named `bend`, which has no
+    /// class in `signs.ron`, so nothing steered the seal and it stopped
+    /// gathering. Drawing the rune the app already knows makes that impossible.
+    pub sign: &'static str,
     pub blurb: &'static str,
     /// How many keystones ring it.
     pub signs: usize,
@@ -339,6 +361,13 @@ pub struct Preset {
     pub open: bool,
     /// Canon's `AllInward` — arrows at the middle rather than away from it.
     pub inward: bool,
+    /// Seals laid *inside* this one's ring, if it is a nested working.
+    ///
+    /// Empty for the ordinary case. When it is not, the preset's own `sigil`
+    /// and `signs` describe the **first** inner seal rather than the outer
+    /// ring, which carries no marks of its own — canon rule 4 has the outer
+    /// ring gating what is inside it, and a gate does not need a sigil.
+    pub with: &'static [Nested],
 }
 
 /// Every seal `preset` can lay down.
@@ -352,26 +381,32 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         id: "flamespout",
         sigil: "fire",
+        sign: "column",
         blurb: "fire + four columns - a column of flame, straight up",
         signs: 4,
         open: false,
         inward: false,
+        with: &[],
     },
     Preset {
         id: "flamespout",
         sigil: "fire",
+        sign: "column",
         blurb: "the same seal, PREPARED - close the gap yourself",
         signs: 4,
         open: true,
         inward: false,
+        with: &[],
     },
     Preset {
         id: "fire_shot",
         sigil: "fire",
+        sign: "column",
         blurb: "fire + three signs - thrown the way they point",
         signs: 3,
         open: false,
         inward: false,
+        with: &[],
     },
     // Four arrows pointing at the middle. Canon's `AllInward`: "manifests only
     // inside the ring" — which is exactly how a ball of water differs from a
@@ -380,58 +415,131 @@ pub const PRESETS: &[Preset] = &[
     Preset {
         id: "water_orb",
         sigil: "water",
+        // **Canon calls for levitation here and we stamp `column` instead**,
+        // which is an honest hole rather than a preference. `shapes.rs`'s
+        // levitation reconstruction is a column with an arrowhead, and a 90
+        // degree corner fits a *large* circle with a small relative error — so
+        // `RingSearch::min_roundness`, which asks how far the ink strays as a
+        // fraction of the radius it claims, waves it through. Four keystones
+        // became four tiny rings and the seal came apart into five.
+        //
+        // The arrangement is what does the work either way: `focus` asks only
+        // that a sign steers, and `column` steers. The day somebody traces a
+        // real levitation rune this becomes `levitation` and the reconstruction
+        // stops mattering (§12).
+        sign: "column",
         blurb: "water + four arrows pointing IN - held as a ball",
         signs: 4,
         open: false,
         inward: true,
+        with: &[],
     },
     Preset {
         id: "water_orb",
         sigil: "water",
+        // **Canon calls for levitation here and we stamp `column` instead**,
+        // which is an honest hole rather than a preference. `shapes.rs`'s
+        // levitation reconstruction is a column with an arrowhead, and a 90
+        // degree corner fits a *large* circle with a small relative error — so
+        // `RingSearch::min_roundness`, which asks how far the ink strays as a
+        // fraction of the radius it claims, waves it through. Four keystones
+        // became four tiny rings and the seal came apart into five.
+        //
+        // The arrangement is what does the work either way: `focus` asks only
+        // that a sign steers, and `column` steers. The day somebody traces a
+        // real levitation rune this becomes `levitation` and the reconstruction
+        // stops mattering (§12).
+        sign: "column",
         blurb: "the orb, PREPARED - close it and it forms",
         signs: 4,
         open: true,
         inward: true,
+        with: &[],
     },
     Preset {
         id: "raincleaver",
         sigil: "water",
+        sign: "column",
         blurb: "water, eight signs - Qifrey's cutting spell",
         signs: 8,
         open: false,
         inward: false,
+        with: &[],
     },
     Preset {
         id: "mistveil",
         sigil: "water",
+        sign: "column",
         blurb: "water as a cloud - six signs, spread wide",
         signs: 6,
         open: false,
         inward: false,
+        with: &[],
     },
     Preset {
         id: "windrider",
         sigil: "wind",
+        sign: "column",
         blurb: "wind - finds air, or does nothing at all",
         signs: 4,
         open: false,
         inward: false,
+        with: &[],
     },
     Preset {
         id: "earth_wall",
         sigil: "earth",
+        // Convergence's reconstruction is a closed triangle, which the ring
+        // search finds as a ring outright. Same hole as levitation's, above.
+        sign: "column",
         blurb: "earth + arrows IN - gathers stone and packs it rigid",
         signs: 4,
         open: false,
         inward: true,
+        with: &[],
+    },
+    // **Two elements under one ring**, and the only preset that is a *working*
+    // rather than a seal. Fire below throwing upward, a water orb above holding
+    // still — and nothing in the compiler knows what that combination means.
+    // The flame rises into the water because it is hot and thin, the water
+    // boils because `reactions.ron` says water above a hundred degrees becomes
+    // steam, and the steam climbs on its own because a water molecule is
+    // lighter than the air it displaces. Every step is a rule that was already
+    // there for its own reasons.
+    Preset {
+        id: "kettle",
+        sigil: "fire",
+        sign: "column",
+        blurb: "TWO seals in one ring - fire below, water held above. It boils",
+        signs: 3,
+        open: false,
+        inward: false,
+        with: &[
+            Nested {
+                sigil: "fire",
+                sign: "column",
+                signs: 3,
+                inward: false,
+                at: (0.0, -0.40),
+            },
+            Nested {
+                sigil: "water",
+                sign: "column",
+                signs: 4,
+                inward: true,
+                at: (0.0, 0.40),
+            },
+        ],
     },
     Preset {
         id: "lightfall",
         sigil: "light",
+        sign: "column",
         blurb: "light - a lamp above the seal, not a beam",
         signs: 4,
         open: false,
         inward: false,
+        with: &[],
     },
 ];
 
@@ -487,13 +595,42 @@ impl Simulation {
 }
 
 /// Remembers where the pointer is, so `pour` lands under it.
+/// How far the pointer reaches into the world, in pixels.
+const STIR_REACH: f32 = 80.0;
+
+/// How much of the pointer's own speed it lends to what it passes through.
+///
+/// **Ours entirely** (§2.6) and deliberately small. Canon gives a person no way
+/// to touch a spell that is already running, so this is a liberty; keeping it
+/// gentle is what stops it becoming a second magic system that outranks the
+/// drawing. You can push smoke about and disturb a flame; you cannot aim one.
+const STIR_STRENGTH: f32 = 0.55;
+
 fn track_focus(
     pointer: Res<crate::ui::Pointer>,
+    mouse: Res<ButtonInput<MouseButton>>,
     tools: Option<Res<ToolState>>,
     mut world: ResMut<Simulation>,
 ) {
+    let was = world.focus;
     if let (Some(at), false) = (pointer.at, pointer.over_ui) {
         world.focus = SimVec2::new(at.x, at.y);
+
+        // **Only while the pen is up.** Drawing is how a seal is made, and a
+        // stroke that also shoved the water about would make the two feel like
+        // one gesture — you would be unable to draw near a running spell
+        // without disturbing it, which is the opposite of a workshop.
+        if !mouse.pressed(MouseButton::Left) && world.running {
+            let moved = world.focus - was;
+            // Ignore a jump: the pointer entering the window, or the focus
+            // being set for the first time, is not a swipe through the world.
+            if moved.length() < STIR_REACH {
+                let here = world.focus;
+                world
+                    .sim
+                    .stir(here, STIR_REACH, moved * (STIR_STRENGTH / 0.016));
+            }
+        }
     }
     // The panel owns the switch; the rules own the behaviour.
     if let Some(state) = tools.as_deref() {
@@ -512,7 +649,11 @@ fn track_focus(
 /// casts on the rising edge only. Nothing listens for a "ring closed" event
 /// because there is no such event to listen for: `assembly` recomputes closure
 /// from the ink every frame, which is exactly what makes toggling free.
-fn watch_the_pad(pad: Res<InkPad>, tools: Option<Res<ToolState>>, mut world: ResMut<Simulation>) {
+fn watch_the_pad(
+    tools: Option<Res<ToolState>>,
+    reading: Res<Reading>,
+    mut world: ResMut<Simulation>,
+) {
     // Canon rule 2, taken literally: "a spell activates only when its ring is
     // complete. Leaving a gap prepares a spell to be fired later by closing
     // it." A button was always the wrong shape for that.
@@ -521,74 +662,66 @@ fn watch_the_pad(pad: Res<InkPad>, tools: Option<Res<ToolState>>, mut world: Res
         return;
     }
 
-    // The compile phase borrows the catalogue; the cast phase mutates the
-    // world. Scoped so the first is finished before the second begins, rather
-    // than cloning a catalogue sixty times a second to dodge the borrow.
-    let (next, fired, refused) = {
-        let Some(catalog) = world.lore.as_ref() else {
-            return;
-        };
+    // **Reads `Reading` rather than the pad**, and that was a real bug rather
+    // than a tidy-up. This used to run its own `find_rings` with
+    // `RingSearch::default()` — `join: 16.0` — while `reading.rs` searches with
+    // the shell's own `CLOSURE_TOLERANCE` of `20.0`. A ring whose ends sat
+    // eighteen pixels apart was therefore **closed to the caption and open to
+    // the watcher**: the seal said `ACTIVE - circuit closed`, and nothing ever
+    // fired. Reported as "the particle is not showing up", and it was never the
+    // particles.
+    //
+    // The general shape of it is the one this project keeps meeting: two
+    // readings of one drawing always disagree eventually, and the fix is never
+    // to sync the constants.
+    if reading.rings.is_empty() {
+        world.armed.clear();
+        return;
+    }
+    let only_traced = tools.as_deref().is_none_or(|state| state.only_traced);
 
-        let rings = assembly::find_rings(&pad.points, &assembly::RingSearch::default());
-        if rings.is_empty() {
-            world.armed.clear();
-            return;
-        }
+    let mut next: Vec<Armed> = Vec::with_capacity(reading.spells.len());
+    let mut fired: Vec<(magic_core::Spell, SimVec2)> = Vec::new();
+    let mut refused: Vec<String> = Vec::new();
 
-        let glyphs = assembly::glyphs(&rings, &pad.points, ON_RING_TOLERANCE, &RULES);
-        let spells = magic_core::compile_all(&glyphs, catalog, &CompileRules::default());
-        let only_traced = tools.as_deref().is_none_or(|state| state.only_traced);
+    for (glyph, spell) in reading.glyphs.iter().zip(reading.spells.iter()) {
+        let center = SimVec2::new(glyph.ring.center().x, glyph.ring.center().y);
+        let radius = glyph.ring.radius();
 
-        let mut next: Vec<Armed> = Vec::with_capacity(spells.len());
-        let mut fired: Vec<(magic_core::Spell, SimVec2)> = Vec::new();
-        let mut refused: Vec<String> = Vec::new();
+        // **The edge is about the ring, not about the cast.** `fired` tracks
+        // whether the circuit was closed last frame, so a seal that closes and
+        // is then refused has still had its one moment — it does not re-ask
+        // every frame, and re-opening the ring re-arms it.
+        let closed = spell.fires();
+        let refusal = refuses(spell, only_traced);
 
-        for (glyph, spell) in glyphs.iter().zip(&spells) {
-            let center = SimVec2::new(glyph.ring.center().x, glyph.ring.center().y);
-            let radius = glyph.ring.radius();
-            // **The edge is about the ring, not about the cast.** `fired`
-            // tracks whether the circuit was closed last frame, so a seal that
-            // closes and is then refused has still had its one moment — it does
-            // not re-ask every frame, and re-opening the ring re-arms it.
-            //
-            // Getting this wrong the other way was the bug: a refused seal that
-            // never set the flag would be refused sixty times a second, and a
-            // refusal you cannot read because it is being reprinted is the same
-            // as no refusal at all.
-            let closed = spell.fires();
-            let refusal = refuses(spell, only_traced);
+        // Was this seal on the pad last frame, and had it already closed?
+        let before = world
+            .armed
+            .iter()
+            .find(|seal| {
+                (seal.center - center).length() < SAME_RING
+                    && (seal.radius - radius).abs() < SAME_RING
+            })
+            .map(|seal| seal.fired)
+            .unwrap_or(false);
 
-            // Was this seal on the pad last frame, and had it already closed?
-            let before = world
-                .armed
-                .iter()
-                .find(|seal| {
-                    (seal.center - center).length() < SAME_RING
-                        && (seal.radius - radius).abs() < SAME_RING
-                })
-                .map(|seal| seal.fired)
-                .unwrap_or(false);
-
-            if closed && !before {
-                match refusal {
-                    None => fired.push((spell.clone(), center)),
-                    // **Silence was the bug.** A ring that closes and does
-                    // nothing, with nothing on screen saying why, is
-                    // indistinguishable from a ring that closed and the app
-                    // missed it — which is exactly how this was reported:
-                    // "some of the particle won't run even tho the ring is
-                    // closed". The circuit closed. The app declined. Say so.
-                    Some(why) => refused.push(why),
-                }
+        if closed && !before {
+            match refusal {
+                None => fired.push((spell.clone(), center)),
+                // **Silence was a bug of its own.** A ring that closes and does
+                // nothing, with nothing on screen saying why, is
+                // indistinguishable from a ring that closed and the app missed
+                // it.
+                Some(why) => refused.push(why),
             }
-            next.push(Armed {
-                center,
-                radius,
-                fired: closed,
-            });
         }
-        (next, fired, refused)
-    };
+        next.push(Armed {
+            center,
+            radius,
+            fired: closed,
+        });
+    }
 
     world.armed = next;
     for (spell, center) in fired {
@@ -761,7 +894,10 @@ impl Plugin for SimPlugin {
                 Update,
                 (track_focus, watch_the_pad)
                     .chain()
-                    .after(crate::capture_stroke),
+                    // After the pad is read, not merely after it is captured:
+                    // the watcher consumes `Reading` now, and a frame-late
+                    // reading is a seal that fires a frame after it closed.
+                    .after(crate::reading::read_pad),
             );
     }
 }

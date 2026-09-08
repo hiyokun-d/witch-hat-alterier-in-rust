@@ -98,7 +98,8 @@ fn seal(points: Vec<Point>) -> Glyph {
         .max_by(|a, b| a.fit.radius.total_cmp(&b.fit.radius))
         .expect("the fixture must make at least one ring");
     let mut glyph = Glyph::new(GlyphId(0), None, ring.to_ring(&RULES_FOR_TESTS));
-    name(&mut glyph, ring, &points, &shapes_book(), ON_RING);
+    let owned = crate::assembly::owned(std::slice::from_ref(ring), &points, ON_RING);
+    name(&mut glyph, ring, &points, &owned[0], &shapes_book());
     glyph
 }
 
@@ -233,7 +234,8 @@ fn a_sigil_drawn_alone_is_not_a_ring_and_does_not_fire() {
 
     for ring in &rings {
         let mut glyph = Glyph::new(GlyphId(0), None, ring.to_ring(&RULES_FOR_TESTS));
-        name(&mut glyph, ring, &ink, &shapes_book(), ON_RING);
+        let owned = crate::assembly::owned(std::slice::from_ref(ring), &ink, ON_RING);
+        name(&mut glyph, ring, &ink, &owned[0], &shapes_book());
         let spell = crate::compile(&glyph, &catalog(), &crate::CompileRules::default());
         assert!(!spell.fires(), "a bare {:?} fired as a seal", ring.strokes);
     }
@@ -247,7 +249,8 @@ fn every_built_in_drawn_alone_stays_inert() {
         let ink = mark(which, (0.0, 0.0), 60.0, 0);
         for ring in find_rings(&ink, &RingSearch::default()) {
             let mut glyph = Glyph::new(GlyphId(0), None, ring.to_ring(&RULES_FOR_TESTS));
-            name(&mut glyph, &ring, &ink, &shapes_book(), ON_RING);
+            let owned = crate::assembly::owned(std::slice::from_ref(&ring), &ink, ON_RING);
+            name(&mut glyph, &ring, &ink, &owned[0], &shapes_book());
             let spell = crate::compile(&glyph, &catalog(), &crate::CompileRules::default());
             assert!(!spell.fires(), "{which} fired with no ring around it");
         }
@@ -267,7 +270,8 @@ fn a_real_ring_still_fires() {
         .max_by(|a, b| a.fit.radius.total_cmp(&b.fit.radius))
         .expect("a ring");
     let mut glyph = Glyph::new(GlyphId(0), None, ring.to_ring(&RULES_FOR_TESTS));
-    name(&mut glyph, ring, &ink, &shapes_book(), ON_RING);
+    let owned = crate::assembly::owned(std::slice::from_ref(ring), &ink, ON_RING);
+    name(&mut glyph, ring, &ink, &owned[0], &shapes_book());
 
     let spell = crate::compile(&glyph, &catalog(), &crate::CompileRules::default());
     assert!(spell.fires(), "a proper seal stopped firing");

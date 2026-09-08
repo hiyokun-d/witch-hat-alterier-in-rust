@@ -71,3 +71,79 @@ fn a_tiny_window_still_leaves_a_pixel_of_paper() {
     tiny.resolution.set(10.0, 10.0);
     assert!(PaperShape::Disc.extent(&tiny).x >= 1.0);
 }
+
+// ── the panel, as a person meets it ─────────────────────────────────────────
+
+#[test]
+fn no_two_buttons_share_a_label() {
+    // Two buttons with one name is a panel that cannot be described. The last
+    // version had three separate things with `trace` in the name — one chose a
+    // rune, one toggled a readout, one decided whether untraced runes could
+    // cast at all — and `tool_named` would have silently returned whichever
+    // came first.
+    let mut seen: Vec<&str> = Vec::new();
+    for tool in crate::ui::TOOLS {
+        assert!(
+            !seen.contains(&tool.label),
+            "two buttons are both called {:?}",
+            tool.label
+        );
+        seen.push(tool.label);
+    }
+}
+
+#[test]
+fn every_button_fits_its_slot() {
+    // The panel is a fixed width and lays itself out from this table, so a long
+    // label is not a squeeze — it is text running off the edge of a button.
+    for tool in crate::ui::TOOLS {
+        assert!(
+            tool.label.len() <= 9,
+            "{:?} is {} characters and will not fit",
+            tool.label,
+            tool.label.len()
+        );
+    }
+}
+
+#[test]
+fn every_button_says_what_it_does() {
+    // A hint that only repeats the label teaches nothing, and the hint line is
+    // the only explanation anyone gets.
+    for tool in crate::ui::TOOLS {
+        assert!(
+            tool.hint.len() > tool.label.len() + 8,
+            "{:?} has a hint that says no more than its name: {:?}",
+            tool.label,
+            tool.hint
+        );
+        assert!(
+            tool.hint.is_ascii(),
+            "{:?}'s hint has a character the shipped font cannot draw: {:?}",
+            tool.label,
+            tool.hint
+        );
+        assert!(
+            tool.label.is_ascii(),
+            "{:?} has a character the shipped font cannot draw",
+            tool.label
+        );
+    }
+}
+
+#[test]
+fn sections_are_contiguous() {
+    // A change of `section` starts a new block, so a section named twice draws
+    // its heading twice and splits its own buttons in half.
+    let mut blocks: Vec<&str> = Vec::new();
+    for tool in crate::ui::TOOLS {
+        if blocks.last() != Some(&tool.section) {
+            assert!(
+                !blocks.contains(&tool.section),
+                "section {:?} appears in two separate blocks",
+                tool.section
+            );
+            blocks.push(tool.section);
+        }
+    }
+}

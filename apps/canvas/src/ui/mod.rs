@@ -311,269 +311,290 @@ pub struct Tool {
 ///
 /// Order is the layout: entries are drawn in this sequence and a change of
 /// `section` starts a new block with a heading.
+/// Every button on the panel, top to bottom.
+///
+/// Order is the layout: entries are drawn in this sequence and a change of
+/// `section` starts a new block with a heading.
+///
+/// # Named for the workshop, not for the code
+///
+/// The labels were the engine's own vocabulary for a long time, and it showed.
+/// Three separate buttons had `trace` in the name — one chose a rune, one
+/// toggled a readout, one decided whether untraced runes could cast — and three
+/// more (`clear`, `wipe`, `empty`) were destructive verbs that never said what
+/// they destroyed. Neither is a thing to hand a friend.
+///
+/// So: a canon word wherever it is *also* the clearer one — `sign`, `glaive`,
+/// `link`, `seal` are all the manga's own — and plain English wherever flavour
+/// would obscure. `radius +` became `bigger`. `arc` became `open ring`, which
+/// says what it is *for*. `wipe` became `fresh`, `empty` became `banish`, and
+/// the two now plainly act on different things.
+///
+/// The controls that shape a thing sit beside it: `gap +` and `gap -` follow
+/// `open ring` rather than living in a `size` block three headings away.
 pub const TOOLS: &[Tool] = &[
     Tool {
-        section: "place",
+        section: "hand",
         label: "pen",
         hint: "draw by hand  (Esc)",
         action: Action::Pick(Mode::Pen),
     },
     Tool {
-        section: "place",
+        section: "hand",
         label: "ring",
-        hint: "click or drag out a closed ring - fires on its own",
+        hint: "the circuit. Click or drag one out - a closed ring casts",
         action: Action::Pick(Mode::Place(Shape::Ring)),
     },
     Tool {
-        section: "place",
-        label: "arc",
-        hint: "a ring with a hole - drag to aim the hole. Rule 2's prepared spell",
+        section: "hand",
+        label: "open ring",
+        hint: "a ring left with a gap. The spell waits; closing it casts",
         action: Action::Pick(Mode::Place(Shape::Arc)),
     },
     Tool {
-        section: "place",
-        label: "sign",
-        hint: "a keystone - drag to aim it, set its length. Size is power (canon 2.4)",
-        action: Action::Pick(Mode::Place(Shape::Sign)),
-    },
-    Tool {
-        section: "place",
-        label: "glaive",
-        hint: "a claw - how firmly the spell embeds. Straddle the ring with it",
-        action: Action::Pick(Mode::Place(Shape::Glaive)),
-    },
-    Tool {
-        section: "place",
-        label: "spiral",
-        hint: "ink that turns twice - the ring search must reject this",
-        action: Action::Pick(Mode::Place(Shape::Spiral)),
-    },
-    Tool {
-        section: "place",
-        label: "erase",
-        hint: "rub out one stroke - click the ink you want gone",
-        action: Action::Pick(Mode::Place(Shape::Erase)),
-    },
-    Tool {
-        section: "place",
-        label: "link",
-        hint: "drag from one ring to another - canon rule 5, linked seals",
-        action: Action::Pick(Mode::Place(Shape::Link)),
-    },
-    Tool {
-        section: "size",
-        label: "radius +",
-        hint: "place bigger - canon rule 8, larger seals are stronger",
-        action: Action::Run(Command::Bigger),
-    },
-    Tool {
-        section: "size",
-        label: "radius -",
-        hint: "place smaller",
-        action: Action::Run(Command::Smaller),
-    },
-    Tool {
-        section: "size",
+        section: "hand",
         label: "gap +",
-        hint: "widen the hole an arc leaves",
+        hint: "widen the gap an open ring is left with",
         action: Action::Run(Command::WiderGap),
     },
     Tool {
-        section: "size",
+        section: "hand",
         label: "gap -",
-        hint: "narrow the hole - take it to zero and the arc closes",
+        hint: "narrow it. Take it to nothing and the ring is closed",
         action: Action::Run(Command::NarrowerGap),
     },
     Tool {
-        section: "pad",
+        section: "hand",
+        label: "sign",
+        hint: "a keystone. Drag to aim it and set its length - length is power",
+        action: Action::Pick(Mode::Place(Shape::Sign)),
+    },
+    Tool {
+        section: "hand",
+        label: "glaive",
+        hint: "a claw, for how deeply a spell takes hold. Straddle the ring with it",
+        action: Action::Pick(Mode::Place(Shape::Glaive)),
+    },
+    Tool {
+        section: "hand",
+        label: "link",
+        hint: "drag between two rings to join them. Linked seals amplify each other",
+        action: Action::Pick(Mode::Place(Shape::Link)),
+    },
+    Tool {
+        section: "hand",
+        label: "erase",
+        hint: "rub out one stroke. Click the ink you want gone",
+        action: Action::Pick(Mode::Place(Shape::Erase)),
+    },
+    Tool {
+        section: "hand",
+        label: "spiral",
+        hint: "ink that turns twice over. A ring must not be this, and this proves it",
+        action: Action::Pick(Mode::Place(Shape::Spiral)),
+    },
+    Tool {
+        section: "hand",
+        label: "bigger",
+        hint: "place larger. A larger seal is a stronger one",
+        action: Action::Run(Command::Bigger),
+    },
+    Tool {
+        section: "hand",
+        label: "smaller",
+        hint: "place smaller. A small seal is weaker, and quicker to draw well",
+        action: Action::Run(Command::Smaller),
+    },
+    Tool {
+        section: "sigils",
+        label: "fire",
+        hint: "place the fire sigil, drag to size it - makes and moves flame and heat",
+        action: Action::Pick(Mode::Place(Shape::Mark("fire"))),
+    },
+    Tool {
+        section: "sigils",
+        label: "water",
+        hint: "place the water sigil, drag to size it - makes, moves and gathers water",
+        action: Action::Pick(Mode::Place(Shape::Mark("water"))),
+    },
+    Tool {
+        section: "sigils",
+        label: "earth",
+        hint: "place the earth sigil, drag to size it - moves stone, wood and sand. It can never make them",
+        action: Action::Pick(Mode::Place(Shape::Mark("earth"))),
+    },
+    Tool {
+        section: "sigils",
+        label: "wind",
+        hint: "place the wind sigil, drag to size it - moves the air that is there. It cannot make air",
+        action: Action::Pick(Mode::Place(Shape::Mark("wind"))),
+    },
+    Tool {
+        section: "sigils",
+        label: "light",
+        hint: "place the light sigil, drag to size it - manifests the magic as light. A fire variant, not a fifth element",
+        action: Action::Pick(Mode::Place(Shape::Mark("light"))),
+    },
+    Tool {
+        section: "seals",
+        label: "seal",
+        hint: "lay a whole seal on the page, drawn with your own runes",
+        action: Action::Run(Command::Preset),
+    },
+    Tool {
+        section: "seals",
+        label: "seal >",
+        hint: "choose which seal - it is also the one the guide teaches",
+        action: Action::Run(Command::NextPreset),
+    },
+    Tool {
+        section: "seals",
+        label: "guide",
+        hint: "click where you want the lesson. Only one at a time; clicking moves it",
+        action: Action::Pick(Mode::Place(Shape::Guide)),
+    },
+    Tool {
+        section: "cast",
+        label: "cast",
+        hint: "compile every seal on the page and fire it",
+        action: Action::Run(Command::Cast),
+    },
+    Tool {
+        section: "cast",
+        label: "on close",
+        hint: "cast the moment a ring closes, with no button. How a seal really works",
+        action: Action::Toggle(Toggle::Auto),
+    },
+    Tool {
+        section: "cast",
+        label: "run",
+        hint: "start or stop time",
+        action: Action::Run(Command::PlayPause),
+    },
+    Tool {
+        section: "cast",
+        label: "step",
+        hint: "one moment only, so a frame can be read instead of watched",
+        action: Action::Run(Command::StepOnce),
+    },
+    Tool {
+        section: "cast",
+        label: "edges",
+        hint: "walls the world cannot escape. Off, whatever leaves is gone for good",
+        action: Action::Toggle(Toggle::Walls),
+    },
+    Tool {
+        section: "matter",
+        label: "pour",
+        hint: "pour a little of something where you are pointing",
+        action: Action::Run(Command::Pour),
+    },
+    Tool {
+        section: "matter",
+        label: "pour >",
+        hint: "choose what to pour - water, flame, air, ice, stone, steam",
+        action: Action::Run(Command::NextPour),
+    },
+    Tool {
+        section: "matter",
+        label: "kindle",
+        hint: "scatter things on the page for a spell to burn, soak, blow or light",
+        action: Action::Run(Command::Kindle),
+    },
+    Tool {
+        section: "matter",
+        label: "kindle >",
+        hint: "choose what to scatter - wood, cloth, stone, ice, sand",
+        action: Action::Run(Command::NextKindling),
+    },
+    Tool {
+        section: "matter",
+        label: "banish",
+        hint: "clear the world of magic and matter, leaving your ink alone",
+        action: Action::Run(Command::ClearWorld),
+    },
+    Tool {
+        section: "page",
         label: "undo",
-        hint: "lift the last stroke off the pad  (Cmd Z)",
+        hint: "lift the last stroke off the page  (Cmd Z)",
         action: Action::Run(Command::Undo),
     },
     Tool {
-        section: "pad",
+        section: "page",
         label: "redo",
         hint: "put it back  (Shift Cmd Z)",
         action: Action::Run(Command::Redo),
     },
     Tool {
-        section: "pad",
+        section: "page",
         label: "clear",
-        hint: "empty the pad, recoverably  (Cmd Del)",
+        hint: "clear the ink. Undo brings it back  (Cmd Del)",
         action: Action::Run(Command::Clear),
     },
     Tool {
-        section: "pad",
-        label: "wipe",
-        hint: "empty the pad and its history  (Shift Cmd Del)",
+        section: "page",
+        label: "fresh",
+        hint: "a clean page, history and all. Nothing comes back  (Shift Cmd Del)",
         action: Action::Run(Command::ClearAll),
     },
     Tool {
-        section: "pad",
-        label: "trace >",
-        hint: "choose which rune the next recording is traced as",
+        section: "learn",
+        label: "rune >",
+        hint: "choose which rune your next recording will be saved as",
         action: Action::Run(Command::NextTraced),
     },
     Tool {
-        section: "pad",
-        label: "forget",
-        hint: "throw away every sample of the chosen rune and start it over",
-        action: Action::Run(Command::Forget),
-    },
-    Tool {
-        section: "pad",
+        section: "learn",
         label: "record",
-        hint: "save the drawn rune under the chosen name - it goes live at once",
+        hint: "save the rune you drew under that name. It is live at once",
         action: Action::Run(Command::Record),
     },
     Tool {
-        section: "element",
-        label: "fire",
-        hint: "place the fire sigil - drag to size. Makes and moves flame",
-        action: Action::Pick(Mode::Place(Shape::Mark("fire"))),
+        section: "learn",
+        label: "forget",
+        hint: "throw away every sample of that rune and begin it again",
+        action: Action::Run(Command::Forget),
     },
     Tool {
-        section: "element",
-        label: "water",
-        hint: "place the water sigil - drag to size. Makes and moves water",
-        action: Action::Pick(Mode::Place(Shape::Mark("water"))),
-    },
-    Tool {
-        section: "element",
-        label: "earth",
-        hint: "place the earth sigil - drag to size. Moves stone, never makes it",
-        action: Action::Pick(Mode::Place(Shape::Mark("earth"))),
-    },
-    Tool {
-        section: "element",
-        label: "wind",
-        hint: "place the wind sigil - drag to size. Moves air, cannot make it",
-        action: Action::Pick(Mode::Place(Shape::Mark("wind"))),
-    },
-    Tool {
-        section: "element",
-        label: "light",
-        hint: "place the light sigil - drag to size. A fire variant, not a fifth",
-        action: Action::Pick(Mode::Place(Shape::Mark("light"))),
-    },
-    Tool {
-        section: "name",
-        label: "guide",
-        hint: "click where you want the lesson - one at a time, clicking moves it",
-        action: Action::Pick(Mode::Place(Shape::Guide)),
-    },
-    Tool {
-        section: "name",
-        label: "preset",
-        hint: "lay down a whole seal and name it - nothing to draw",
-        action: Action::Run(Command::Preset),
-    },
-    Tool {
-        section: "name",
-        label: "preset >",
-        hint: "choose which seal preset lays down",
-        action: Action::Run(Command::NextPreset),
-    },
-    Tool {
-        section: "cast",
-        label: "auto",
-        hint: "fire the moment a ring closes - canon rule 2, no button needed",
-        action: Action::Toggle(Toggle::Auto),
-    },
-    Tool {
-        section: "cast",
-        label: "cast",
-        hint: "compile every seal on the pad and fire it into the world",
-        action: Action::Run(Command::Cast),
-    },
-    Tool {
-        section: "cast",
-        label: "run",
-        hint: "start or stop the simulation - it steps at a fixed 60Hz",
-        action: Action::Run(Command::PlayPause),
-    },
-    Tool {
-        section: "cast",
-        label: "tick",
-        hint: "one step, so a frame can be read instead of watched",
-        action: Action::Run(Command::StepOnce),
-    },
-    Tool {
-        section: "cast",
-        label: "walls",
-        hint: "edges the world cannot escape - off, what leaves is gone and the mass falls",
-        action: Action::Toggle(Toggle::Walls),
-    },
-    Tool {
-        section: "cast",
-        label: "pour",
-        hint: "drop a blob of the chosen substance in the middle, to watch it react",
-        action: Action::Run(Command::Pour),
-    },
-    Tool {
-        section: "cast",
-        label: "pour >",
-        hint: "choose what pour drops - water, flame, air, ice, stone, steam",
-        action: Action::Run(Command::NextPour),
-    },
-    Tool {
-        section: "cast",
-        label: "kindle",
-        hint: "scatter things on the paper for a spell to burn, soak, blow or light",
-        action: Action::Run(Command::Kindle),
-    },
-    Tool {
-        section: "cast",
-        label: "kindle >",
-        hint: "choose what kindle scatters - wood, cloth, stone, ice, sand",
-        action: Action::Run(Command::NextKindling),
-    },
-    Tool {
-        section: "cast",
-        label: "empty",
-        hint: "clear the world, leaving the ink alone",
-        action: Action::Run(Command::ClearWorld),
-    },
-    Tool {
-        section: "view",
-        label: "traced",
-        hint: "only runes you traced can name a mark or fire a seal - off, built-ins and the blast come back",
+        section: "learn",
+        label: "learned",
+        hint: "only runes you have recorded may name a mark or fire a seal",
         action: Action::Toggle(Toggle::Traced),
     },
     Tool {
-        section: "view",
-        label: "trace",
-        hint: "the tracing board - what record will save, and how close it is",
+        section: "sight",
+        label: "spell",
+        hint: "what the seal will do, and where its power gathers",
+        action: Action::Toggle(Toggle::Spell),
+    },
+    Tool {
+        section: "sight",
+        label: "world",
+        hint: "the magic itself - every parcel, and what it is doing",
+        action: Action::Toggle(Toggle::Sim),
+    },
+    Tool {
+        section: "sight",
+        label: "tracing",
+        hint: "how close the rune you just drew is to the one on file",
         action: Action::Toggle(Toggle::Trace),
     },
     Tool {
-        section: "view",
+        section: "sight",
+        label: "runes",
+        hint: "your ink scored against every rune you have recorded",
+        action: Action::Toggle(Toggle::Runes),
+    },
+    Tool {
+        section: "sight",
         label: "guides",
         hint: "rings and spokes to draw along",
         action: Action::Toggle(Toggle::Guides),
     },
     Tool {
-        section: "view",
-        label: "spell",
-        hint: "what the seal compiles to - driver, firing, balance, warnings",
-        action: Action::Toggle(Toggle::Spell),
-    },
-    Tool {
-        section: "view",
-        label: "world",
-        hint: "the simulation overlay - parcels, density, what it is doing",
-        action: Action::Toggle(Toggle::Sim),
-    },
-    Tool {
-        section: "view",
-        label: "runes",
-        hint: "score the ink against every recorded rune - record adds one",
-        action: Action::Toggle(Toggle::Runes),
-    },
-    Tool {
-        section: "view",
-        label: "debug",
-        hint: "the measurement overlay  (F1)",
+        section: "sight",
+        label: "measure",
+        hint: "every number the engine measured  (F1)",
         action: Action::Toggle(Toggle::Debug),
     },
 ];
@@ -707,7 +728,7 @@ pub fn run(
         Command::Cast => {
             // The result goes on the hint line for the same reason recording's
             // does: nobody is reading a terminal while drawing.
-            let said = world.cast_pad(pad, tools);
+            let said = world.cast_pad(reading, tools);
             world.last = Some(said.clone());
             last.0 = Some(said);
         }
@@ -757,10 +778,19 @@ pub fn run(
             // never went through the recogniser. Now it draws the traced rune,
             // and if there is no traced rune it declines and says which one to
             // go and trace.
-            if tools.only_traced && !reading.is_traced(preset.sigil) {
+            // Every rune the working needs, not only the first — a nested
+            // preset draws two sigils and refusing on one of them would stamp
+            // half a spell.
+            let needed: Vec<&str> = std::iter::once(preset.sigil)
+                .chain(preset.with.iter().map(|part| part.sigil))
+                .collect();
+            if let Some(missing) = needed
+                .iter()
+                .find(|name| tools.only_traced && !reading.is_traced(name))
+            {
                 last.0 = Some(format!(
-                    "{} needs a traced {} sigil - trace one and press this again",
-                    preset.id, preset.sigil
+                    "{} needs a traced {missing} sigil - trace one and press this again",
+                    preset.id
                 ));
                 return;
             }
@@ -772,15 +802,7 @@ pub fn run(
 
             stamp::place(
                 pad,
-                stamp::seal(
-                    &reading.shapes,
-                    preset.sigil,
-                    Vec2::ZERO,
-                    tools.stamp_radius,
-                    preset.signs,
-                    preset.open,
-                    preset.inward,
-                ),
+                stamp::working(&reading.shapes, &preset, Vec2::ZERO, tools.stamp_radius),
             );
 
             last.0 = Some(match tools.auto {
@@ -873,10 +895,12 @@ pub fn run(
                     all.get(at).cloned()
                 })
                 .unwrap_or_else(|| ("RENAME_ME".to_string(), "Sigil"));
-            last.0 = Some(match record::record(pad, &id, kind) {
-                Ok(message) => message,
-                Err(why) => format!("nothing written - {why}"),
-            });
+            last.0 = Some(
+                match record::record(pad, &reading.ring_strokes(), &id, kind) {
+                    Ok(message) => message,
+                    Err(why) => format!("nothing written - {why}"),
+                },
+            );
         }
     }
 }

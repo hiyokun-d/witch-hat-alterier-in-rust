@@ -367,3 +367,318 @@ fn a_seal_that_does_not_fire_channels_for_no_time_at_all() {
     assert!(!open.fires());
     assert_eq!(channel_for(&open, &CastRules::default()), 0.0);
 }
+
+// ---- where the magic goes, and what decides it ----------------------------
+
+/// A seal with `n` keystones evenly spaced, each turned by `turn` from outward.
+fn with_signs(sigil: &str, n: usize, turn: f32) -> Glyph {
+    let mut glyph = seal(Some(sigil));
+    glyph.signs = (0..n)
+        .map(|slot| {
+            let placement = std::f32::consts::TAU * slot as f32 / n as f32;
+            crate::glyph::Sign {
+                kind: "column".into(),
+                placement,
+                orientation: placement + turn,
+                size: 20.0,
+                reversed: false,
+            }
+        })
+        .collect();
+    glyph
+}
+
+/// How far the raised parcels sit from a point, on average.
+fn spread_about(field: &Field, about: Vec2) -> f32 {
+    let n = field.parcels().len().max(1) as f32;
+    field
+        .parcels()
+        .iter()
+        .map(|p| (p.at - about).length())
+        .sum::<f32>()
+        / n
+}
+
+#[test]
+fn a_seal_with_no_signs_manifests_at_its_own_centre() {
+    // **Reported from a screenshot**: a hand-drawn fire seal put its flame above
+    // the ring rather than inside it. `placement`'s fallback aimed straight up,
+    // quoting canon's line about column signs "all the same size, and as such,
+    // the same power" — which is a claim about a seal with *balanced* signs and
+    // not about a seal with **none**. Nothing configured this spell, so there is
+    // no direction to obey.
+    let mut field = grid();
+    cast(
+        &spell_for(Some("fire")),
+        Vec2::ZERO,
+        &mut field,
+        &CastRules::default(),
+    );
+    assert!(
+        spread_about(&field, Vec2::ZERO) < 40.0,
+        "raised {}px from the centre of a 100px ring",
+        spread_about(&field, Vec2::ZERO)
+    );
+    // And with no velocity imposed on it: fire rises because it is hot, which
+    // is the whole reason buoyancy is modelled.
+    let pushed = field
+        .parcels()
+        .iter()
+        .map(|p| p.velocity.length())
+        .fold(0.0f32, f32::max);
+    assert!(
+        pushed < 1.0,
+        "a seal that says nothing pushed at {pushed}px/s"
+    );
+}
+
+#[test]
+fn arrows_pointing_inward_raise_the_magic_at_the_middle() {
+    // The water orb's opening arrangement. `Balance` says this seal goes
+    // nowhere — correctly, four arrows cancel — so until `focus` existed the
+    // simulation had no way to tell it from a seal with no signs at all.
+    let mut field = grid();
+    let inward = compile(
+        &with_signs("water", 4, std::f32::consts::PI),
+        &catalog(),
+        &CompileRules::default(),
+    );
+    cast(&inward, Vec2::ZERO, &mut field, &CastRules::default());
+
+    for parcel in field.parcels() {
+        assert!(
+            parcel.at.length() < 100.0,
+            "a gathering seal put substance {}px out, past its own ring",
+            parcel.at.length()
+        );
+    }
+}
+
+#[test]
+fn arrows_pointing_outward_throw_it_past_the_ring() {
+    // The same sigil, arrows reversed, opposite spell — and the arrangement is
+    // doing every bit of the work (§2.3).
+    let mut field = grid();
+    let outward = compile(
+        &with_signs("water", 4, 0.0),
+        &catalog(),
+        &CompileRules::default(),
+    );
+    cast(&outward, Vec2::ZERO, &mut field, &CastRules::default());
+
+    // Measured after it has travelled and against the opposite arrangement,
+    // because where a fountain *starts* is not the interesting half and an
+    // absolute distance would only be measuring how fast water falls.
+    let reach_of = |spell: &Spell| {
+        let mut sim = crate::sim::Sim::new(grid());
+        sim.cast(spell, Vec2::ZERO);
+        for _ in 0..60 {
+            sim.step();
+        }
+        spread_about(&sim.field, Vec2::ZERO)
+    };
+    let gathering = compile(
+        &with_signs("water", 4, std::f32::consts::PI),
+        &catalog(),
+        &CompileRules::default(),
+    );
+    let (out, in_) = (reach_of(&outward), reach_of(&gathering));
+    assert!(
+        out > in_ * 1.5,
+        "arrows out reached {out:.0}px and arrows in {in_:.0}px - the \
+         arrangement is not deciding anything"
+    );
+}
+
+#[test]
+fn a_gathering_spell_holds_its_substance_while_it_runs() {
+    // **The orb, and the half placement cannot do.** Water falls; a seal that
+    // only decides where it *appears* has lost it a second later. The pull is
+    // what makes gathering a lasting state.
+    let mut sim = crate::sim::Sim::new(grid());
+    let orb = compile(
+        &with_signs("water", 4, std::f32::consts::PI),
+        &catalog(),
+        &CompileRules::default(),
+    );
+    sim.cast(&orb, Vec2::ZERO);
+    assert!(!sim.channels.is_empty(), "the orb has to keep running");
+
+    for _ in 0..120 {
+        sim.step();
+    }
+    let held = spread_about(&sim.field, Vec2::ZERO);
+    assert!(
+        held < 90.0,
+        "the orb spread to {held}px after two seconds - it is not being held"
+    );
+}
+
+#[test]
+fn nothing_is_held_once_the_spell_has_finished() {
+    // The honest ending, and the reason the pull lives on the **channel**
+    // rather than on the parcel: a spell that held its water forever would be a
+    // spell with no duration, and canon rule 8 grades every seal on how long it
+    // lasts. Asserted on the force rather than on where the water ended up,
+    // because a parcel's own lifetime expires long before a channel's does and
+    // an empty field would pass a falls-to-the-floor test for the wrong reason.
+    let mut sim = crate::sim::Sim::new(grid());
+    sim.field.add(parcel("water", Vec2::new(60.0, 0.0), 1.0));
+
+    let held = {
+        let mut running = sim.clone();
+        let orb = compile(
+            &with_signs("water", 4, std::f32::consts::PI),
+            &catalog(),
+            &CompileRules::default(),
+        );
+        running.cast(&orb, Vec2::ZERO);
+        running.step();
+        running.field.parcels()[0].velocity.x
+    };
+    assert!(held < -1.0, "a running orb should pull inward, got {held}");
+
+    // The same world with no spell in it leaves the water alone sideways.
+    sim.step();
+    assert!(
+        sim.field.parcels()[0].velocity.x.abs() < 0.5,
+        "something pulled with no spell running"
+    );
+}
+
+#[test]
+fn stirring_moves_what_is_there_and_makes_nothing() {
+    // §3.2's rule, applied to the one liberty we take with canon: the pointer
+    // may push what is already in the world and may not add to it.
+    let mut sim = crate::sim::Sim::new(grid());
+    sim.field.add(parcel("water", Vec2::new(10.0, 0.0), 1.0));
+    let before = sim.field.mass();
+
+    sim.stir(Vec2::ZERO, 60.0, Vec2::new(50.0, 0.0));
+    assert_eq!(sim.field.mass(), before, "stirring created matter");
+    assert!(sim.field.parcels()[0].velocity.x > 0.0);
+}
+
+#[test]
+fn stirring_reaches_only_as_far_as_it_says() {
+    let mut sim = crate::sim::Sim::new(grid());
+    sim.field.add(parcel("water", Vec2::new(200.0, 0.0), 1.0));
+    sim.stir(Vec2::ZERO, 60.0, Vec2::new(50.0, 0.0));
+    assert_eq!(sim.field.parcels()[0].velocity, Vec2::ZERO);
+}
+
+#[test]
+fn a_weak_seal_still_holds_its_water_up() {
+    // **The screenshot's actual seal.** A sigil filling a fifth of its ring has
+    // an intensity near `0.15`, and the first attempt scaled the holding force
+    // by exactly that — so it pulled at 225px/s2 against 900 of gravity and the
+    // water fell straight through the ring while the reading beside it said
+    // `GATHERS at the centre`.
+    //
+    // Canon never described a tug of war. `water_orb`'s own catalogue entry
+    // says "gravity is reduced and the water is held in suspension as a ball",
+    // and that is a claim about weight being *taken away*.
+    let mut glyph = with_signs("water", 4, std::f32::consts::PI);
+    glyph.ring = Ring::new(at(0.0, 0.0), 200.0, true, 0.99);
+    glyph.sigil_extent = 30.0; // a fifth of the ring: a weak spell
+    let weak = compile(&glyph, &catalog(), &CompileRules::default());
+    assert!(
+        weak.strength() < 0.25,
+        "the fixture stopped being a weak seal: {}",
+        weak.strength()
+    );
+
+    let mut sim = crate::sim::Sim::new(grid());
+    sim.cast(&weak, Vec2::ZERO);
+    for _ in 0..180 {
+        sim.step();
+    }
+
+    // The water's centre of mass, not its lowest speck: parcels expire and are
+    // replaced constantly, so the lowest one is mostly a measure of how recently
+    // somebody died on the way down. Where the *body* of water sits is the
+    // question a person watching is asking.
+    assert!(
+        settled_height(&sim) > -60.0,
+        "the water sank to {} in a 200px ring - it is not being held",
+        settled_height(&sim)
+    );
+}
+
+/// Where the mass of water actually sits, vertically.
+fn settled_height(sim: &crate::sim::Sim) -> f32 {
+    let mass: f32 = sim.field.parcels().iter().map(|p| p.mass).sum();
+    if mass <= 0.0 {
+        return 0.0;
+    }
+    sim.field
+        .parcels()
+        .iter()
+        .map(|p| p.at.y * p.mass)
+        .sum::<f32>()
+        / mass
+}
+
+#[test]
+fn without_suspension_the_same_seal_drops_its_water() {
+    // The control, and the one that says *which* term is doing the work. A test
+    // that only showed the water staying up could be passed by a stronger
+    // spring, and a spring was the thing that was wrong.
+    let mut glyph = with_signs("water", 4, std::f32::consts::PI);
+    glyph.ring = Ring::new(at(0.0, 0.0), 200.0, true, 0.99);
+    glyph.sigil_extent = 30.0;
+    let weak = compile(&glyph, &catalog(), &CompileRules::default());
+
+    let height = |suspend: f32| {
+        let mut sim = crate::sim::Sim::new(grid());
+        sim.cast_rules.suspend = suspend;
+        sim.cast(&weak, Vec2::ZERO);
+        for _ in 0..180 {
+            sim.step();
+        }
+        settled_height(&sim)
+    };
+    let (carried, dropped) = (height(1.0), height(0.0));
+    assert!(
+        carried.abs() < 15.0,
+        "a carried orb should sit at the focus, not {carried}"
+    );
+    assert!(
+        carried > dropped + 20.0,
+        "carrying the weight changed nothing: held at {carried}, dropped at {dropped}"
+    );
+}
+
+#[test]
+fn a_running_spell_does_not_pour_down_one_line() {
+    // `cast` places by slot and a channel casts a *single* parcel per tick, so
+    // slot is always zero — every drop of a long spell entered the world at the
+    // same point, which is why a gathering seal poured a thin vertical stream
+    // through the middle of its own ring instead of filling it.
+    let mut sim = crate::sim::Sim::new(grid());
+    let orb = compile(
+        &with_signs("water", 4, std::f32::consts::PI),
+        &catalog(),
+        &CompileRules::default(),
+    );
+    sim.cast(&orb, Vec2::ZERO);
+    for _ in 0..40 {
+        sim.step();
+    }
+
+    let spread = |axis: fn(&Parcel) -> f32| {
+        let (lo, hi) = sim
+            .field
+            .parcels()
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), p| {
+                (lo.min(axis(p)), hi.max(axis(p)))
+            });
+        hi - lo
+    };
+    assert!(
+        spread(|p| p.at.x) > 30.0,
+        "the whole spell landed in a {}px-wide line",
+        spread(|p| p.at.x)
+    );
+}

@@ -732,12 +732,17 @@ atelier/
 │       │   │   ├── field.rs   Cell, Field — the grid, and where mass moves
 │       │   │   ├── step.rs    SimRules — motion, heat, repetition, expiry
 │       │   │   ├── cast.rs    CastRules — Spell → matter, under §3.2
+│       │   │   ├── prop.rs    things on the paper a spell can act ON — §2.6
+│       │   │   ├── event.rs   what HAPPENED this tick, for whoever draws it
 │       │   │   └── mod.rs     Sim — a world, its rules, how far it has run
 │       │   └── tests/        one file per module above — see §5
 │       └── the-magic-assets/
 │           ├── sigils.ron    34 sigils + capabilities
 │           ├── signs.ron     44 signs, three canon tiers
-│           └── spells.ron    13 spell fixtures + 7 edge cases
+│           ├── spells.ron    46 spell fixtures, three confidence tiers
+│           ├── materials.ron what a substance IS — density, phase, ignites_at
+│           ├── reactions.ron 10 rules, every one ours (§2.6)
+│           └── templates.ron traced runes, still empty on purpose (§2)
 └── apps/
     └── canvas/           Bevy shell
         └── src/
@@ -745,7 +750,9 @@ atelier/
             ├── shortcuts.rs undo / redo / clear on &mut InkPad
             ├── sim.rs       the world in the app: FixedUpdate 60Hz, cast_pad
             ├── hand.rs      the typeface, baked in — see §11
-            ├── reading.rs   the pad, read ONCE a frame, shared by everyone
+            ├── props.rs     drawing the props, and `kindle` putting them there
+            ├── particles.rs motes and glow — the visual half of sim/event.rs
+            ├── reading.rs   the pad, read ONCE a frame, and the ONLY rune list
             ├── debug.rs     on-screen overlay — Claude's, see §0
             ├── ui/          tool panel: place, guides, toggles — see §4.8
             │   ├── mod.rs   plugin, ToolState, the TOOLS table
@@ -835,14 +842,311 @@ M4 came in at nine tasks, not the eight first planned: M4.2b — assembling
 strokes into rings — was scoped as part of M4.2 and turned out to be its own
 piece of work.
 
-**Current task:** M8.4 — touch input. M8.1 to M8.3 are done: core and the shell
-both compile to wasm, and `./web.sh` builds and serves a page. What is untested
-is a finger rather than a mouse, and a pad you cannot draw on with a finger is
-not a web build worth having.
+**Current task:** whatever is wrong when the app is next opened. That is the
+whole shape of the polish phase and it is deliberate — a numbered next task here
+would be a guess, and the acceptance test is a person using it rather than a list
+being finished.
 
-**The one thing still blocking the recognizer is not code.** `templates.ron`
-ships empty and the shapes have to be traced. `record` writes them now, so the
-step is a person tracing panels, not a missing feature.
+**What is still blocking the recogniser is not code, and it has moved.** Five
+sigils are traced — fire, water, wind, earth, light — and the app reads them, so
+the *sigil* half is done. **Not one of the forty-four signs has been traced**, so
+every keystone in the app is still `shapes.rs`'s reconstruction (§12). That is
+the largest honest hole left:
+
+- `column` and `levitation` are the two that matter, because between them they
+  are the keystones of nearly every preset;
+- until they are traced, `traced` mode has to keep built-in *signs* enabled or a
+  seal cannot be built at all, which is the one place the app still leans on a
+  shape nobody checked against the source;
+- `templates.ron` is still empty on purpose. Runes live in `recorded-gesture.ron`
+  until somebody promotes them, and promoting them is a copy-paste, not a
+  feature.
+
+**Sample counts are thin where it matters**: fire, wind and light have one sample
+each, earth two, water three. Three to five is what makes a hand-drawn rune match
+reliably, and the tracing board's `on file` row is where to watch it.
+
+**The water still fell, and the catalogue had been saying why all along.**
+
+`water_orb`'s own entry reads: "A water sigil surrounded by levitation signs:
+**gravity is reduced** and the water is held in suspension as a ball." The first
+attempt built a *spring* instead — a force that fights weight — and scaled it by
+the seal's strength. A sigil filling a fifth of its ring has an intensity near
+`0.15`, so the pull came out at **225px/s² against 900 of gravity**, and the
+water poured straight through a ring whose every readout said `GATHERS at the
+centre`.
+
+Canon never describes a tug of war. `CastRules::suspend` has the spell **carry
+the weight** — the parcel's gravity is cancelled while a converging seal holds
+it — and the spring is demoted to what it was always good for: shaping something
+that is already floating into a sphere. Not scaled by strength, deliberately:
+canon's claim is about a levitation seal that is *balanced*, not a strong one.
+A small neat orb and a big one both float, and strength decides how tightly they
+ball up rather than whether they fall.
+
+`without_suspension_the_same_seal_drops_its_water` is the control that names
+which term does the work — a test showing only that the water stays up could be
+passed by a bigger spring, and a spring was the thing that was wrong.
+
+**And it poured down a single line**, because `cast` places by slot and a channel
+casts *one* parcel a tick — so slot was always zero and every drop of a long
+spell entered the world at the same point. `CastRules::phase` walks the placement
+round by an irrational fraction of a circle per tick, which fills the ring and
+still lands on the same answer every run (§4.3).
+
+**Two elements under one ring, which the engine could always do and nothing had
+ever drawn.**
+
+Asked for as "2 circle in 1 big ring, on the bottom fire magic and arrow that
+goes up, on the top a water orb, so we have boiling water". That is canon rule 4
+exactly — "wrap a spell in a second ring and fill the gap between them" — and
+`assembly::nesting` plus `compile_all`'s gating have handled it since M5.2 while
+being reachable only from tests.
+
+**Nothing in the compiler knows what fire plus water means.** The `kettle` preset
+lays down two complete seals inside one outer ring; the flame rises because it is
+hot and thin, the water boils because `reactions.ron` says water above a hundred
+degrees becomes steam, and the steam climbs on its own because a water molecule
+is lighter than the air it displaces. Every step is a rule that was already there
+for its own reasons, which is the difference between a system and a list of
+special cases.
+
+Drawing it exposed a real gap: **`RingCandidate::contents` answers a question
+about one circle**, so an outer ring claimed both inner sigils as its own and
+compiled to a third spell nobody drew. `assembly::owned` gives each ring only
+what no ring inside it has already claimed — canon rule 4's "the gap between
+them" — and `naming::name` takes that list rather than asking `contents` again.
+
+**Three points fit a circle exactly.** Once presets drew real keystone runes
+rather than a hand-made chevron, each one was found as its own tiny *ring* and a
+water orb came apart into five seals. `min_roundness` is structurally blind to
+this: a fit through three points is perfect by construction, and a three-point
+corner is what an arrowhead becomes after a rune is resampled across its strokes.
+`RingSearch::min_points` is a floor under noise rather than a size limit — a ring
+anybody draws carries dozens of samples, and rule 5's small linked seals are real
+rings with real ink.
+
+**An honest hole, recorded rather than patched.** Canon gives the water orb
+*levitation* signs and the presets stamp `column` instead: `shapes.rs`'s
+levitation reconstruction is a column with a 90-degree arrowhead, and a corner
+fits a *large* circle with a small relative error, so `min_roundness` — which
+asks how far ink strays as a fraction of the radius it claims — waves it through
+however many points it has. Convergence's reconstruction is a closed triangle and
+is worse. The arrangement does the work either way, since `focus` asks only that
+a sign *steers*. The day somebody traces a real levitation rune this stops
+mattering (§12).
+
+**A reading is worth as much ink as it explains.**
+
+Aligned matching had a cost nobody had paid yet: once a sign can be scored at any
+angle, a *single straight stroke* matches `column` rather well — so every stroke
+of a sigil scored as a keystone and six good little readings outscored one
+perfect big one. The built-in light sigil came apart into two lights and four
+columns.
+
+Raising `SPLIT_COST` until the symptom stopped would have been tuning. Weighting
+each node by its **share of the ink** fixes it at the root: a stroke calling
+itself `column` accounts for a sixth of the drawing and is worth a sixth, while
+the whole calling itself `light` accounts for all of it.
+
+Share alone then failed the other way — it rewards *any* reading of a lot of ink,
+so a whole seal merged into one blob scored as a mediocre `water` at `d = 0.306`
+and beat five exact marks. The quality term is **squared**, which is the
+difference between those two cases stated numerically: a big wrong blob is always
+a *near* miss and a small right mark is an exact one, so a near miss is worth a
+quarter of a hit. `SPLIT_COST` drops to `0.05` and only breaks ties now.
+
+Finding it took instrumenting the dynamic program and reading the numbers off,
+which is worth recording because the arithmetic was doing exactly what it was
+told: every level of the tree was losing `0.25`, because the edit that rewrote
+that constant's *documentation* had left its value alone.
+
+**Every keystone in the app pointed backwards.**
+
+Reported from a screenshot of a water orb: four arrows drawn at the middle, and
+the water falling in a thin stream straight through the bottom of the ring. The
+focus crosshair drawn beside it was **orange** — which in its own key means
+*diverging*. The engine was reading four inward arrows as a fountain.
+
+The cause is a nice trap. `naming` took a sign's `orientation` from "the
+direction from the mark's centre to its furthest point", which sounds right and
+is exactly wrong for an arrow: **an arrowhead is a concentration of ink at the
+tip**, so it drags the centroid toward the tip — and the point furthest from a
+centroid sitting near the tip is the *tail*. The rule pointed at the back of
+every arrow ever drawn.
+
+`pointing` replaces it with **the front is the heavy end**. Project the ink onto
+its own long axis; the middle of that *span* is a fact about the outline, and
+the mean of the projections is a fact about where the ink actually is. A head, a
+barb, any thickening that makes one end a front pulls the second past the first,
+and the direction between them is the way the mark points. A mark with no heavy
+end gets the bare axis, which is the honest answer rather than a failure — §2.3
+says a non-directional sign has "no front to point", so a plain bar genuinely
+has none to find.
+
+Two tests, and they are written as a **pair on purpose**:
+`a_stamped_water_orb_gathers_rather_than_spreads` and
+`reversing_the_arrows_reverses_the_spell`. A backwards rule satisfies neither,
+because it would swap both answers at once — a single test could have been
+passed by reversing the bug.
+
+**The panel speaks the workshop's language now.**
+
+Asked for as "making it more natural and not complicated to use, like use some
+magic atelier language". The flavour was the smaller half; the labels had real
+faults:
+
+- **Three separate buttons had `trace` in the name.** One chose which rune your
+  recording would be saved as, one toggled a readout, one decided whether
+  untraced runes could cast at all. They are now `rune >`, `tracing` and
+  `learned`, and `learned` says the actual rule: only runes you have recorded
+  may name a mark or fire a seal.
+- **Three destructive buttons never said what they destroyed.** `clear` emptied
+  the ink recoverably, `wipe` took the history with it, `empty` cleared the
+  *world* and left the ink alone. They are `clear`, `fresh` and `banish`, and
+  the last two plainly act on different things.
+- `preset` never said it makes a **seal**, so it is `seal` — canon's own word
+  and the clearer one.
+- `arc` never said what it is *for*: a ring left with a gap is canon rule 2's
+  prepared spell, so it is `open ring`, and `gap +` / `gap -` now sit **beside
+  it** rather than in a `size` block three headings away. The control that
+  shapes a thing belongs next to the thing.
+- `radius +` became `bigger`, `tick` became `step`, `walls` became `edges`,
+  `auto` became `on close` — which is what it does.
+
+The rule applied throughout: **a canon word wherever it is also the clearer
+one** — `sign`, `glaive`, `link`, `seal`, `sigil` are all the manga's — and plain
+English wherever flavour would obscure. Sections are a workbench rather than a
+module list: `hand`, `sigils`, `seals`, `cast`, `matter`, `page`, `learn`,
+`sight`.
+
+Four tests keep the table honest, and each one is a mistake already made:
+no two buttons share a label (the `trace` collision would have made
+`tool_named` return whichever came first); every label fits its slot; every hint
+says more than its own name; and a section never appears in two blocks, which
+would draw its heading twice and split its own buttons.
+
+**The magic came out of the top of the ring, and the signs decided nothing.**
+
+Reported from a screenshot: a hand-drawn fire seal with its flame sitting above
+the sigil, outside the middle of its own ring. Two separate faults, and the
+second is the bigger one.
+
+**One.** `cast::placement`'s fallback aimed **straight up**, quoting canon's line
+about column signs "all the same size, and as such, the same power… a balanced
+spell that shoots straight up". That is a claim about a seal with *balanced
+signs*. It is not a claim about a seal with **none**, and reading it as one made
+every bare seal spit its element out of its own top.
+
+A seal with no signs has been configured by nothing: the sigil says *what*, the
+ring says *when*, and the signs say *how* — so with no signs there is no
+direction to obey. It manifests at the seal, scattered a little so a dozen
+parcels read as a body rather than a dot, and with **no velocity imposed at
+all**. Fire then rises because it is hot and water falls because it is heavy,
+which is the entire reason those are modelled rather than scripted.
+
+**Two, and this is the one worth the section.** Placement read `RegionArrangement`
+and then fell through to `Balance` — so the only signs that could steer a spell
+were *region* signs. Every other keystone was invisible to it. Four levitation
+arrows drawn at the middle sum to **zero drift**, so `Balance` correctly reported
+a spell going nowhere, and the simulation could not tell that seal from an empty
+one.
+
+`arrangement::focus` had already been built to answer exactly this and nothing
+was reading it. `placement` now asks, in order: **region signs** (canon states
+their four cases outright, and "only inside the ring" is a meaning no column sign
+carries), then **where the keystones actually aim**, then the centre. Gathering
+rings the focal point and aims *at* it; spreading throws from it; split lands on
+the ring as canon's floating drops; a beam fans along the heading.
+
+**And an orb needs holding, which placement can never do.**
+
+Deciding where parcels *appear* is worthless a second later — water falls out of
+the bottom of the ring and fire leaves through the top. `Sim::hold_channels`
+pulls a converging spell's substance toward its focal point for as long as the
+spell runs. Canon describes the force and we picked its strength: levitation
+"floats the target, often shaping it into a sphere when balanced", and a sphere
+is what being pulled toward one point from every side makes.
+
+A plain spring, `a = k·d`, and the first version got that wrong in an instructive
+way: it also divided by the seal's reach, which made the pull **weakest exactly
+where it had to be strongest** — four pixels per second against nine hundred of
+gravity. At `k = 30` the edge of a 140px ring pulls at 4200px/s² and the balance
+point sits about 30px below the focus, so the orb holds *and sags*, which is what
+a held ball of water looks like.
+
+It lives on the **channel**, so it lasts as long as the spell does and no longer.
+A pull that outlived its seal would be a spell with no duration, and rule 8
+grades every seal on how long it holds.
+`nothing_is_held_once_the_spell_has_finished` asserts that on the *force* rather
+than on where the water ended up — a parcel's own lifetime expires long before a
+channel's does, so a falls-to-the-floor test would have passed for the wrong
+reason on an empty field.
+
+**The pointer reaches into the world.** `Sim::stir` pushes what is near it and
+creates nothing — §3.2's rule applied to the one liberty we take, since canon
+gives a person no way to touch a running spell. Deliberately weak, and **only
+while the pen is up**: a stroke that also shoved the water about would make
+drawing and disturbing feel like one gesture, and you could not draw near a
+running spell without wrecking it.
+
+**Where the power goes is drawn on the paper now**, not only printed. The `focus`
+line said it in words, and a number beside a drawing is not the same as a mark
+*on* one — the question is spatial, so the answer belongs where you are looking.
+The focal point gets a crosshair, its tightness a circle, and every steering sign
+a faint spoke toward it. Four spokes meeting at one crosshair *is* the water orb,
+drawn. It rides the `spell` toggle rather than F1, for the same reason the ring
+caption does: it is a question you have while drawing.
+
+**The seal said ACTIVE and nothing fired, because there were two ring searches.**
+
+Reported with a screenshot: a `water_orb` on the paper, captioned
+`water - MAKES water` over `ACTIVE - circuit closed`, and not one parcel in the
+world. Read as "the particle is not showing up" — and once again it was never the
+particles.
+
+```
+reading.rs   join 20.0   on_ring 12.5   ->  the caption:  ACTIVE
+sim.rs       join 16.0   on_ring 12.0   ->  the watcher:  still open
+```
+
+`watch_the_pad` ran its own `assembly::find_rings` with
+`assembly::RingSearch::default()`, whose `join` is tuned in core for "a pen a few
+pixels wide". This shell draws a five-pixel pen and sets `CLOSURE_TOLERANCE` to
+`INK_WIDTH * 4.0`. A ring whose two ends sat eighteen pixels apart was **closed
+to the thing that captions it and open to the thing that fires it**, so the seal
+reported itself active forever and the rising edge never happened.
+
+Three sites had their own copy — `watch_the_pad`, `cast_pad`, and the recorder's
+`gestures`, which meant `record` could also disagree about which strokes were
+ring ink and quietly save a rune with a piece missing. A fourth, `debug.rs`'s
+spell block, re-ran `assembly::glyphs` + `compile_all` rather than searching, so
+it skipped `naming` entirely: the caption beside it said `water` while the block
+below reported a discharge. And `sim.rs` kept a **second `ON_RING_TOLERANCE`**
+of its own.
+
+All four now read `Reading`, which is the module that exists for exactly this and
+has said so in its own header since it was written — it lists "the auto-cast
+watcher, and `cast_pad` twice over" among the eight places it was meant to
+replace, and those two were never converted. `watch_the_pad` also moved from
+`.after(capture_stroke)` to `.after(read_pad)`, because a frame-late reading is a
+seal that fires a frame after it closed.
+
+**The regression test greps the source, and that is the right shape for it.**
+The failure was never that some function returned a wrong number — it was that a
+*second reading existed at all*, and no assertion about behaviour can see that.
+So `the_shell_has_exactly_one_ring_search` walks every shell file and fails on the
+words `find_rings` or `RingSearch::default()`. Its companion asserts the two
+tolerance sets still *differ*, so the day somebody "fixes" the drift by syncing
+the constants, the test says plainly that syncing was not the fix.
+
+**This is the fourth time the same bug has appeared in a different costume**, and
+it is worth naming: two recognisers with two vocabularies; a spell block
+compiling its own glyph; a preset stamping shapes the recogniser had never seen;
+and now two ring searches. Every one of them was *both parts working correctly*
+on inputs that disagreed. The rule the project has earned: **when two places both
+answer a question about the drawing, they will drift, and the fix is to delete
+one — never to make them agree.**
 
 **Every real seal was unreadable, and rotation was why.**
 
@@ -2524,6 +2828,13 @@ what they are, and **superseded the moment somebody traces the real thing**.
 `templates::with_built_ins` appends them *after* whatever was recorded and skips
 any name already taken, so a traced `fire` wins the day it exists.
 `a_recorded_rune_outranks_the_built_in_of_the_same_name` pins that.
+
+The **app** does its own merge in `reading::load_shapes` rather than calling that
+helper, because it needs two things the helper does not offer: a `sources` list
+saying where each shape came from, and the `traced` filter that drops built-in
+*sigils* while keeping built-in *signs*. Same rule, same order, one extra knob —
+and `with_built_ins` stays as core's own convenience for anyone using the library
+directly.
 
 They live in **core** rather than in the shell because a shape is load-bearing
 now: the recognizer matches against these, so what a fire sigil looks like

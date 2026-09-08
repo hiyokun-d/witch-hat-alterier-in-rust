@@ -357,6 +357,7 @@ impl Plugin for DebugOverlayPlugin {
             (
                 update_ring_labels,
                 update_loose_labels,
+                draw_focus,
                 draw_parcels,
                 draw_world,
             )
@@ -687,12 +688,7 @@ fn closeness(distance: f32) -> f32 {
 /// but only ink that really is a ring, so water's teardrops and light's diamond
 /// survive being part of their own sigil.
 fn tracing_ink(pad: &InkPad, reading: &Reading) -> Vec<crate::Point> {
-    let rings: Vec<u32> = reading
-        .rings
-        .iter()
-        .filter(|ring| ring.is_simple(crate::reading::RULES.simple_tolerance))
-        .flat_map(|ring| ring.strokes.clone())
-        .collect();
+    let rings = reading.ring_strokes();
     pad.points
         .iter()
         .copied()
@@ -1584,7 +1580,7 @@ fn update_inspector(
         held.points,
         held.extent,
         fit.radius,
-        spell_report(&pad, rings, slot, &lore, tools.as_deref()),
+        spell_report(&reading, slot, &lore, tools.as_deref()),
         world_report(world.as_deref(), tools.as_deref(), &reading),
     ));
 }
@@ -1768,29 +1764,26 @@ fn update_matches(
 ///
 /// The shell decides nothing here: it builds a `Glyph`, calls `compile`, and
 /// prints what comes back (§4.2).
-fn spell_report(
-    pad: &InkPad,
-    rings: &[assembly::RingCandidate],
-    slot: usize,
-    lore: &Lore,
-    tools: Option<&ToolState>,
-) -> String {
+fn spell_report(reading: &Reading, slot: usize, lore: &Lore, tools: Option<&ToolState>) -> String {
     if !tools.is_none_or(|t| t.spell) {
         return String::new();
     }
-    let Some(catalog) = lore.0.as_ref() else {
+    if lore.0.is_none() {
         return "\nspell      catalogue failed to load".to_string();
-    };
+    }
 
-    // Built from the whole pad, not from this ring alone. A hand-assembled
-    // `Glyph` was the bug: it never carried `unnamed`, so a ring covered in
-    // marks nobody can read reported canon rule 9's *bare* ring — the exact lie
-    // `Warning::Unreadable` was added to stop. It also could not know about
-    // nesting or links, because rules 4, 5 and 6 are questions about several
-    // glyphs and `compile` only ever sees one.
-    let glyphs = assembly::glyphs(rings, &pad.points, ON_RING_TOLERANCE, &RULES);
-    let spells = magic_core::compile_all(&glyphs, catalog, &magic_core::CompileRules::default());
-    let (Some(glyph), Some(spell)) = (glyphs.get(slot), spells.get(slot)) else {
+    // **Read, never recompiled.** Two earlier versions of this block built their
+    // own glyphs, and both were wrong in the same way. The first hand-assembled
+    // a `Glyph` from one ring, so it never carried `unnamed` and reported canon
+    // rule 9's *bare* ring over a seal covered in ink. The second ran
+    // `assembly::glyphs` + `compile_all` again — closer, and still a second
+    // reading, because `naming` never touched it: the caption beside it said
+    // `water - MAKES water` while this block reported a discharge.
+    //
+    // `reading.rs` exists precisely so there is one answer. A readout that
+    // recomputes is a readout that will eventually describe a different drawing
+    // from the one on the paper.
+    let (Some(glyph), Some(spell)) = (reading.glyphs.get(slot), reading.spells.get(slot)) else {
         return "\nspell      no glyph for this ring".to_string();
     };
     let warnings = if spell.warnings.is_empty() {
@@ -2722,4 +2715,65 @@ fn ink_text(pad: &InkPad, mouse: &ButtonInput<MouseButton>) -> String {
         pad.points.len(),
         pad.undone.len(),
     )
+}
+
+/// Draws where each seal's power gathers.
+///
+/// Asked for directly: "add a debug screen to show where the magic goes like
+/// focusing the power, if the arrows all goes to the middle then focus all of
+/// it power goes to middle".
+///
+/// The `focus` line in the spell block already says it in words, and a number
+/// beside a drawing is not the same as a mark *on* it — the whole question is
+/// spatial, and the answer belongs where you are looking. So the focal point
+/// gets a crosshair, its tightness gets a circle, and every steering sign gets
+/// a spoke showing what it is aiming at.
+///
+/// Rides the `spell` toggle rather than F1, because "where will this go" is a
+/// question you have while drawing (§0's own reasoning for the ring caption).
+fn draw_focus(reading: Res<Reading>, tools: Option<Res<ToolState>>, mut gizmos: Gizmos) {
+    if !tools.is_none_or(|state| state.spell) {
+        return;
+    }
+
+    for (glyph, spell) in reading.glyphs.iter().zip(reading.spells.iter()) {
+        let focus = &spell.focus;
+        // A beam and an unaimed seal have no point to draw, and inventing one
+        // would be the readout lying about the thing it exists to report.
+        let colour = match focus.convergence {
+            magic_core::arrangement::Convergence::Converging => Color::srgba(0.30, 0.80, 0.95, 0.9),
+            magic_core::arrangement::Convergence::Diverging => Color::srgba(0.98, 0.55, 0.20, 0.9),
+            magic_core::arrangement::Convergence::Split => Color::srgba(0.75, 0.55, 0.95, 0.9),
+            _ => continue,
+        };
+
+        let centre = Vec2::new(glyph.ring.center().x, glyph.ring.center().y);
+        let at = centre + Vec2::new(focus.at.0, focus.at.1);
+        let radius = glyph.ring.radius();
+
+        // The crosshair. Six pixels, because this marks a point rather than
+        // covering one.
+        gizmos.line_2d(at - Vec2::X * 6.0, at + Vec2::X * 6.0, colour);
+        gizmos.line_2d(at - Vec2::Y * 6.0, at + Vec2::Y * 6.0, colour);
+
+        // How tightly the rays actually meet. A wide circle is a seal whose
+        // signs nearly agree; a tight one is an orb.
+        let spread = focus.spread.max(2.0);
+        gizmos.circle_2d(
+            Isometry2d::from_translation(at),
+            spread,
+            colour.with_alpha(0.35),
+        );
+
+        // What each steering sign is aiming at. This is the part that makes the
+        // reading obvious rather than merely correct: four spokes converging on
+        // one crosshair *is* the water orb, drawn.
+        for sign in &spell.effective {
+            let Some(drawn) = glyph.signs.iter().find(|s| &s.kind == sign) else {
+                continue;
+            };
+            let from = centre + Vec2::from_angle(drawn.placement) * radius;
+            gizmos.line_2d(from, at, colour.with_alpha(0.25));
+        }
+    }
 }

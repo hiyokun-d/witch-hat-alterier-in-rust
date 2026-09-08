@@ -100,7 +100,7 @@ const UNREAD_COST: f32 = 0.5;
 /// higher than one and the seal reported a sigil it could not place. A part of
 /// a rune resembling the rune is a discovery about the shape, not a second
 /// rune, and this is the term that says so.
-const SPLIT_COST: f32 = 0.25;
+const SPLIT_COST: f32 = 0.05;
 
 /// How many points of a stroke the proximity test looks at.
 ///
@@ -346,6 +346,8 @@ pub fn segment(points: &[Point], ids: &[u32], shapes: &[Recorded]) -> Vec<Mark> 
     }
 
     let all: Vec<Template> = shapes.iter().map(|r| r.template.clone()).collect();
+    // How much ink there is altogether, so a node can be scored on its share.
+    let total: usize = strokes.iter().map(|(_, run)| run.len()).sum();
 
     // Score every node once, then take the best cut. `best` holds what a node
     // is worth and which nodes that answer is made of.
@@ -369,11 +371,35 @@ pub fn segment(points: &[Point], ids: &[u32], shapes: &[Recorded]) -> Vec<Mark> 
             turn: said.turn,
         });
 
-        // A clear match earns by how clear it is; ink nobody can read costs.
-        let alone = match said.found {
-            Some(_) => 1.0 - said.distance / NEAR_ENOUGH,
-            None => -UNREAD_COST,
-        };
+        // **A reading is worth as much ink as it explains.**
+        //
+        // Scoring each mark on its own merit alone was not enough, and aligned
+        // matching is what exposed it: once a sign can be scored at any angle, a
+        // single straight stroke matches `column` rather well, so *every* stroke
+        // of a sigil scores as a keystone and six good little readings outscored
+        // one perfect big one. The built-in light sigil came apart into two
+        // lights and four columns.
+        //
+        // Weighting by share fixes it at the root rather than by raising the
+        // penalty until the symptom stops. A stroke calling itself `column`
+        // accounts for a sixth of the drawing and is worth a sixth; the whole
+        // calling itself `light` accounts for all of it. Splitting now has to
+        // *earn* its pieces rather than merely collect them.
+        // Squared, and that is the other half. Share alone rewards *any*
+        // reading of a lot of ink, so the whole seal merged into one blob —
+        // sigil, keystones and all — scored as a mediocre `water` and beat five
+        // correct marks. Squaring makes a near miss worth a quarter of an exact
+        // hit, which is the difference between those two cases: a big wrong blob
+        // is always a *near* miss, and a small right mark is an exact one.
+        let share = ink.len() as f32 / total.max(1) as f32;
+        let alone = share
+            * match said.found {
+                Some(_) => {
+                    let quality = 1.0 - said.distance / NEAR_ENOUGH;
+                    quality * quality
+                }
+                None => -UNREAD_COST,
+            };
         // `>=` keeps a node whole on a tie: fewer, larger marks is the reading
         // that matches how a person draws.
         match node.halves {
@@ -395,24 +421,67 @@ pub fn segment(points: &[Point], ids: &[u32], shapes: &[Recorded]) -> Vec<Mark> 
         .collect()
 }
 
-/// The angle of a mark's longest axis, for a sign's `orientation`.
+/// Which way a mark points, for a sign's `orientation`.
 ///
-/// The direction from the mark's centre to the point furthest from it. Crude,
-/// and right for the shapes that matter: a column and a levitation sign are
-/// both long in the direction they point.
-fn long_axis(points: &[Point]) -> f32 {
+/// # Why the obvious rule is backwards
+///
+/// This used to be "the direction from the centre to the furthest point", and
+/// on an arrow that is **exactly wrong**. An arrowhead is a concentration of
+/// ink at the tip, so the centroid is dragged toward the tip — and the point
+/// furthest from a centroid sitting near the tip is the *tail*. Every keystone
+/// in the app was read pointing backwards, which turned a water orb's four
+/// inward arrows into a diverging seal: the focus reported `SPREADS from`, the
+/// gathering pull never engaged, and the water fell straight through the ring.
+///
+/// # The rule that works
+///
+/// **The front is the heavy end.** Project the ink onto its own long axis; the
+/// midpoint of that *span* is a fact about the mark's outline, and the mean of
+/// the projections is a fact about where its ink actually is. A head, a barb, a
+/// thickening — anything that makes one end a front — pulls the second past the
+/// first, and the direction from span-middle toward ink-mean is the way it
+/// points.
+///
+/// A mark with no heavy end gets the bare axis, and that is the honest answer
+/// rather than a failure: §2.3 says a non-directional sign has "no front to
+/// point", so a plain bar genuinely does not have one to find.
+pub fn pointing(points: &[Point]) -> f32 {
     let (cx, cy) = centre(points);
-    let far = points
-        .iter()
-        .max_by(|a, b| {
-            let da = (a.x - cx).powi(2) + (a.y - cy).powi(2);
-            let db = (b.x - cx).powi(2) + (b.y - cy).powi(2);
-            da.total_cmp(&db)
-        })
-        .copied();
-    match far {
-        Some(p) if (p.y - cy) != 0.0 || (p.x - cx) != 0.0 => (p.y - cy).atan2(p.x - cx),
-        _ => 0.0,
+
+    // The long axis, from the covariance of the ink about its centroid. Same
+    // quantity `recognizer::principal_axis` uses, computed here because that
+    // one works on a normalised cloud and this works on the ink as drawn.
+    let (mut xx, mut xy, mut yy) = (0.0f32, 0.0f32, 0.0f32);
+    for p in points {
+        let (dx, dy) = (p.x - cx, p.y - cy);
+        xx += dx * dx;
+        xy += dx * dy;
+        yy += dy * dy;
+    }
+    let spread = ((xx - yy) * (xx - yy) + 4.0 * xy * xy).sqrt();
+    if xx + yy <= f32::EPSILON || spread <= f32::EPSILON {
+        return 0.0;
+    }
+    let axis = 0.5 * (2.0 * xy).atan2(xx - yy);
+    let along = (axis.cos(), axis.sin());
+
+    // Where the ink sits along that axis. The centroid projects to zero by
+    // construction, so the comparison is against the *span's* midpoint.
+    let (mut low, mut high) = (f32::MAX, f32::MIN);
+    for p in points {
+        let t = (p.x - cx) * along.0 + (p.y - cy) * along.1;
+        low = low.min(t);
+        high = high.max(t);
+    }
+    let middle = (low + high) * 0.5;
+
+    // `middle` negative means the span reaches further in `+axis` than in
+    // `-axis` from the ink's centre of mass — so the mass is toward `-axis` and
+    // the *thin* end, the tail, is toward `+axis`. The front is the other way.
+    if middle > 0.0 {
+        axis + std::f32::consts::PI
+    } else {
+        axis
     }
 }
 
@@ -420,16 +489,19 @@ fn long_axis(points: &[Point]) -> f32 {
 ///
 /// Total, like the compiler: ink nobody recognises is not an error, it stays in
 /// `unnamed` and the seal reports how much of itself could not be read.
+/// `ids` is what this ring **owns**, which is not everything it encloses:
+/// canon rule 4 puts an outer ring's own spell in the gap *between* it and the
+/// ring inside it. `assembly::owned` works that out, and handing the answer in
+/// rather than asking `contents` again is what stops a nested working being
+/// counted twice — the outer seal would otherwise claim both inner sigils and
+/// compile to a third spell nobody drew.
 pub fn name(
     glyph: &mut Glyph,
     ring: &RingCandidate,
     points: &[Point],
+    ids: &[u32],
     shapes: &[Recorded],
-    on_ring: f32,
 ) {
-    let held = ring.contents(points, on_ring);
-    let mut ids = held.inside.clone();
-    ids.extend(held.touching.iter().copied());
     if ids.is_empty() || shapes.is_empty() {
         return;
     }
@@ -438,7 +510,7 @@ pub fn name(
     glyph.signs.clear();
     let mut unread = 0;
 
-    for mark in segment(points, &ids, shapes) {
+    for mark in segment(points, ids, shapes) {
         let Some(found) = mark.read else {
             unread += 1;
             continue;
@@ -466,7 +538,7 @@ pub fn name(
                     // Where it sits around the ring — §3.3: inward and outward
                     // are questions about direction *relative to position*.
                     placement: (cy - ry).atan2(cx - rx),
-                    orientation: long_axis(&ink),
+                    orientation: pointing(&ink),
                     // Size is power (§2.4), in the ring's own units so the two
                     // are comparable.
                     size: mark.scale,

@@ -1,6 +1,7 @@
 //! Tests for `sim` — the shell's half of casting, and what it declines to do.
 
 use super::*;
+use magic_core::CompileRules;
 use magic_core::glyph::{Glyph, GlyphId, Ring};
 
 fn origin() -> magic_core::Point {

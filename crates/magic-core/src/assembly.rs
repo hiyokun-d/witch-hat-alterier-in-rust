@@ -75,6 +75,19 @@ pub struct RingSearch {
     /// size instead would be wrong — rule 5 links several small identical
     /// seals, and those are real rings.
     pub min_roundness: f32,
+    /// The fewest points a stroke may have and still *seed* a ring.
+    ///
+    /// **Three points fit a circle exactly**, so a perfect fit through them is
+    /// not evidence of anything — and `min_roundness` is therefore blind to a
+    /// three-point corner, which is what an arrowhead becomes once a rune has
+    /// been resampled across its strokes. Four keystones were each being found
+    /// as their own tiny ring, and a water orb came apart into five seals.
+    ///
+    /// A ring anybody draws by hand carries dozens of samples: capture drops one
+    /// every couple of pixels, so even a twenty-pixel ring has sixty. This is a
+    /// floor under noise, not a size limit — rule 5 links several *small*
+    /// identical seals, and those are real rings.
+    pub min_points: usize,
 }
 
 impl Default for RingSearch {
@@ -88,6 +101,7 @@ impl Default for RingSearch {
             // at 0.77. Low enough that a genuinely wobbly ring survives to be
             // graded, high enough that a bend is not a circle.
             min_roundness: 0.85,
+            min_points: 8,
         }
     }
 }
@@ -342,6 +356,11 @@ pub fn find_rings(points: &[Point], search: &RingSearch) -> Vec<RingCandidate> {
         .iter()
         .enumerate()
         .filter_map(|(index, stroke)| {
+            // Asked before the fit, because a fit through three points is
+            // perfect by construction and tells you nothing. See `min_points`.
+            if stroke.len() < search.min_points {
+                return None;
+            }
             let fit = circle::fit_trimmed(stroke)?;
             let coverage = circle::coverage(stroke, &fit)?;
             (coverage.spanned >= search.min_span && fit.quality() >= search.min_roundness)
@@ -549,6 +568,65 @@ pub fn links(rings: &[RingCandidate], points: &[Point], tolerance: f32) -> Vec<(
 /// job and `templates.ron` is empty until the runes are traced. Every glyph
 /// built here therefore compiles to rule 9's discharge, which is the correct
 /// answer for a ring holding ink nobody can read — not a placeholder.
+/// Which strokes each ring actually owns.
+///
+/// **Canon rule 4 is specific about this and nothing was reading it.** "Wrap a
+/// spell in a second ring and **fill the gap between them** with another
+/// spell" — so an outer ring's own spell is what lies *between* it and the ring
+/// inside it, not everything it happens to enclose. `contents` cannot know
+/// that; it answers a question about one circle.
+///
+/// Without it a nested working is counted twice: the outer seal claims both
+/// inner sigils as its own contents, tries to name them, and compiles to a
+/// third spell nobody drew. That never showed up because nothing in the app had
+/// ever drawn two seals inside one ring.
+///
+/// Returned index-aligned with `rings`, and a stroke is owned by the
+/// **innermost** ring that holds it, which falls out of removing everything any
+/// descendant claims.
+pub fn owned(rings: &[RingCandidate], points: &[Point], tolerance: f32) -> Vec<Vec<u32>> {
+    let parents = nesting(rings);
+
+    // Whether `inner` sits somewhere below `outer` in the nesting chain. Capped
+    // the same way `gate_nesting` caps its walk: a malformed chain is a bug to
+    // survive, not to hang on (§4.7).
+    let descends = |mut inner: usize, outer: usize| -> bool {
+        for _ in 0..rings.len() {
+            match parents[inner] {
+                Some(next) if next == outer => return true,
+                Some(next) => inner = next,
+                None => return false,
+            }
+        }
+        false
+    };
+
+    rings
+        .iter()
+        .enumerate()
+        .map(|(i, ring)| {
+            let held = ring.contents(points, tolerance);
+            let mut mine: Vec<u32> = held.inside;
+            mine.extend(held.touching);
+
+            for (j, other) in rings.iter().enumerate() {
+                if j == i || !descends(j, i) {
+                    continue;
+                }
+                // A nested ring's own ink is that ring's, and so is everything
+                // it holds.
+                let theirs = other.contents(points, tolerance);
+                mine.retain(|id| {
+                    !other.strokes.contains(id)
+                        && !theirs.inside.contains(id)
+                        && !theirs.touching.contains(id)
+                });
+            }
+            mine
+        })
+        .collect()
+}
+
 pub fn glyphs(
     rings: &[RingCandidate],
     points: &[Point],
@@ -557,6 +635,7 @@ pub fn glyphs(
 ) -> Vec<Glyph> {
     let parents = nesting(rings);
     let joined = links(rings, points, tolerance);
+    let mine = owned(rings, points, tolerance);
 
     rings
         .iter()
@@ -565,9 +644,11 @@ pub fn glyphs(
             let mut glyph = Glyph::new(GlyphId(i as u32), None, ring.to_ring(rules));
             let held = ring.contents(points, tolerance);
             glyph.sigil_extent = held.extent;
-            // Everything the ring holds, since nothing here can name any of it.
-            // The day the recognizer can, this drops by one per mark it reads.
-            glyph.unnamed = held.inside.len() + held.touching.len();
+            // What this ring owns, which is not everything it encloses — see
+            // `owned`, and canon rule 4's "fill the gap between them".
+            // Nothing here can name any of it; the day the recognizer does,
+            // this drops by one per mark it reads.
+            glyph.unnamed = mine[i].len();
             glyph.parent = parents[i].map(|j| GlyphId(j as u32));
             glyph.linked = joined
                 .iter()

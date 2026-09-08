@@ -143,7 +143,14 @@ pub fn levitation() -> Strokes {
     vec![
         vec![(0.0, 1.0), (0.0, -0.7)],
         vec![(-0.6, -0.7), (0.6, -0.7)],
-        vec![(-0.34, 0.62), (0.0, 1.0), (0.34, 0.62)],
+        // **A wide head, and the width is load-bearing.** At `(-0.34, 0.62)`
+        // the two ends of the arrowhead sat about 21px apart when the mark was
+        // drawn at a keystone's usual size — against a 20px closure tolerance,
+        // so the ring search found each keystone as its own tiny *ring* and the
+        // seal came apart into five. Canon rule 3 judges closure by endpoints
+        // touching, which is right, and it means a mark with two free ends must
+        // keep them apart. Wide is also what tells this from `column`.
+        vec![(-0.55, 0.45), (0.0, 1.0), (0.55, 0.45)],
     ]
 }
 

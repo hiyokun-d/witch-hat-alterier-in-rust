@@ -249,8 +249,8 @@ pub fn preset_preview(
     };
     // Both buttons, because `preset >` is the one you are on while *choosing*,
     // and choosing without seeing is the thing this exists to fix.
-    let offered = super::bar::tool_named("preset") == Some(over)
-        || super::bar::tool_named("preset >") == Some(over);
+    let offered = super::bar::tool_named("seal") == Some(over)
+        || super::bar::tool_named("seal >") == Some(over);
     if !offered {
         return;
     }
@@ -258,15 +258,7 @@ pub fn preset_preview(
     let Some(preset) = crate::sim::PRESETS.get(tools.preset) else {
         return;
     };
-    for stroke in stamp::seal(
-        &reading.shapes,
-        preset.sigil,
-        Vec2::ZERO,
-        tools.stamp_radius,
-        preset.signs,
-        preset.open,
-        preset.inward,
-    ) {
+    for stroke in stamp::working(&reading.shapes, preset, Vec2::ZERO, tools.stamp_radius) {
         for pair in stroke.windows(2) {
             gizmos.line_2d(pair[0], pair[1], GHOST);
         }

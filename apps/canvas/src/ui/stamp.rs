@@ -65,6 +65,67 @@ pub fn draw_shape(
     }
 }
 
+/// A whole preset as ink — one seal, or a nested working of several.
+///
+/// Canon rule 4 is drawn rather than described: an outer ring with complete
+/// seals inside it, each gated by the outer one closing. The outer ring carries
+/// **no marks of its own**, because a gate does not need a sigil and because
+/// `assembly::owned` gives an outer ring only what lies in the gap between it
+/// and what it encloses.
+///
+/// The geometry is chosen so the inner rings clear each other and the outer:
+/// two seals at `0.40` of the radius with rings of `0.36` reach from `0.04` to
+/// `0.76` of the way out, and their centres are `0.80` apart against a combined
+/// `0.72`. A seal that touched its neighbour would be one ring, not two.
+pub fn working(
+    shapes: &[Recorded],
+    preset: &crate::sim::Preset,
+    center: Vec2,
+    radius: f32,
+) -> Vec<Vec<Vec2>> {
+    // The ring is drawn here rather than inside `face`, so a nested working can
+    // put one round the outside and one round each seal within it without the
+    // two ever disagreeing about which is which. An open ring is canon rule 2's
+    // prepared spell: everything drawn, waiting on its last stroke. The gap
+    // faces up, where it is easiest to see and to close by hand.
+    let mut strokes = if preset.open {
+        arc(center, radius, 34.0, std::f32::consts::FRAC_PI_2)
+    } else {
+        ring(center, radius)
+    };
+
+    if preset.with.is_empty() {
+        strokes.extend(face(
+            shapes,
+            preset.sigil,
+            preset.sign,
+            center,
+            radius,
+            preset.signs,
+            preset.inward,
+        ));
+        return strokes;
+    }
+
+    // Canon rule 4: the outer ring carries nothing of its own and gates what is
+    // inside it.
+    for part in preset.with {
+        let at = center + Vec2::new(part.at.0, part.at.1) * radius;
+        let inner = radius * 0.36;
+        strokes.extend(ring(at, inner));
+        strokes.extend(face(
+            shapes,
+            part.sigil,
+            part.sign,
+            at,
+            inner,
+            part.signs,
+            part.inward,
+        ));
+    }
+    strokes
+}
+
 /// Puts finished strokes on the pad, as capture would have.
 ///
 /// Follows the same contract as drawing: points appended, `stroke_id` bumped
@@ -232,23 +293,16 @@ pub fn link(from: Vec2, reach: f32, facing: f32) -> Vec<Vec<Vec2>> {
 /// A triangle inside a cross rather than a small ring: a ring in the middle
 /// would be found by the ring search and read as canon rule 4's nesting, which
 /// would change what the seal compiles to. A three-sided mark cannot.
-pub fn seal(
+pub fn face(
     shapes: &[Recorded],
     sigil: &str,
+    keystone_name: &str,
     center: Vec2,
     radius: f32,
     signs: usize,
-    open: bool,
     inward: bool,
 ) -> Vec<Vec<Vec2>> {
-    // An open seal is canon rule 2's prepared spell: everything drawn, waiting
-    // on its last stroke. The gap faces up, where it is easiest to see and to
-    // close by hand.
-    let mut strokes = if open {
-        arc(center, radius, 34.0, std::f32::consts::FRAC_PI_2)
-    } else {
-        ring(center, radius)
-    };
+    let mut strokes: Vec<Vec<Vec2>> = Vec::new();
     // **The seal's own sigil, not a stand-in.** This used to be a cross with a
     // triangle in it — a mark nobody could read, which is why the preset had to
     // force its own name to compile to anything. Drawing the rune the
@@ -276,7 +330,7 @@ pub fn seal(
         } else {
             around
         };
-        strokes.extend(sign(at, radius * 0.22, aim));
+        strokes.extend(keystone(shapes, keystone_name, at, radius * 0.22, aim));
     }
     strokes
 }
@@ -302,6 +356,7 @@ pub fn rune(
     name: &str,
     center: Vec2,
     reach: f32,
+    facing: Option<f32>,
 ) -> Option<Vec<Vec<Vec2>>> {
     let found = shapes
         .iter()
@@ -317,15 +372,49 @@ pub fn rune(
     }
     let scale = reach / furthest;
 
+    // Turned to aim where the caller asked, by the same reading `naming` uses to
+    // decide which way a drawn mark points. A keystone is *placed* around a ring
+    // and must point at something; a sigil never turns (§2.2, canon rule 6), so
+    // `facing` is `None` for one and `Some` for the other rather than a flag
+    // somebody has to remember.
+    let turn = facing.map_or(0.0, |want| want - magic_core::naming::pointing(points));
+    let (sin, cos) = turn.sin_cos();
+
     let mut strokes: Vec<Vec<Vec2>> = Vec::new();
     for run in points.chunk_by(|a, b| a.stroke_id == b.stroke_id) {
         strokes.push(
             run.iter()
-                .map(|p| center + Vec2::new(p.x, p.y) * scale)
+                .map(|p| {
+                    let (x, y) = (p.x * scale, p.y * scale);
+                    center + Vec2::new(x * cos - y * sin, x * sin + y * cos)
+                })
                 .collect(),
         );
     }
     (!strokes.is_empty()).then_some(strokes)
+}
+
+/// A keystone, placed and aimed — **the one the recogniser would name**.
+///
+/// The same lesson the sigils already learned, and it cost a water orb to learn
+/// twice: `seal` used to place a hand-drawn chevron and hope. That worked only
+/// while `column` was the nearest thing in the book — record one more keystone
+/// and the chevron starts matching *that* instead. It happened the moment a
+/// `bend` sample was traced: four arrows drawn at the middle came back named
+/// `bend`, which has no class in `signs.ron`, so nothing steered the seal and
+/// the orb stopped gathering.
+///
+/// Drawing the rune the app already knows makes that impossible: what is
+/// stamped is by construction what is read.
+pub fn keystone(
+    shapes: &[Recorded],
+    name: &str,
+    center: Vec2,
+    reach: f32,
+    aim: f32,
+) -> Vec<Vec<Vec2>> {
+    rune(shapes, Kind::Sign, name, center, reach, Some(aim))
+        .unwrap_or_else(|| sign(center, reach, aim))
 }
 
 /// A mark, placed and scaled — **the one you would actually be recognised as**.
@@ -340,10 +429,10 @@ pub fn rune(
 /// Falls back to the built-in geometry for anything untraced, so the keystones
 /// still work before anybody has sat down to trace forty-four of them (§12).
 pub fn glyph_mark(shapes: &[Recorded], which: &str, center: Vec2, reach: f32) -> Vec<Vec<Vec2>> {
-    if let Some(traced) = rune(shapes, Kind::Sigil, which, center, reach) {
+    if let Some(traced) = rune(shapes, Kind::Sigil, which, center, reach, None) {
         return traced;
     }
-    if let Some(traced) = rune(shapes, Kind::Sign, which, center, reach) {
+    if let Some(traced) = rune(shapes, Kind::Sign, which, center, reach, None) {
         return traced;
     }
     magic_core::shapes::built_in()
