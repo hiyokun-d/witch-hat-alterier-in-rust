@@ -2797,12 +2797,21 @@ real `.app` bundle, and an asset path that survives bundling is one more thing
 to get wrong; M8's wasm build would need a third answer again. Eight hundred
 kilobytes in the binary buys one answer that works everywhere.
 
-**What the repository will not carry.** No manga panels, no anime frames, no
-traced-and-recoloured versions of either. That is somebody's artwork, and a
-hobby project with no income is still a copy — "non-commercial" is not a licence
-and "it promotes the work" is not a defence. The rune shapes in
-`templates.ron` are the same rule from the other direction: §2 has them traced
-by a person from the source, not invented and not scraped.
+**What Claude will not do.** Scrape or redistribute the manga's artwork — no
+panels, no anime frames, no traced-and-recoloured versions of either. That is
+somebody else's work, and a hobby project with no income is still a copy:
+"non-commercial" is not a licence and "it promotes the work" is not a defence.
+The rune shapes in `templates.ron` are the same rule from the other direction:
+§2 has them traced **by a person** from the source, never invented and never
+scraped.
+
+**What the repository does carry, and why that is different.**
+`assets/README-ASSETS/` holds the key visual, the wiki banner and a diagram of a
+seal. Daffa put them there himself and they sit in the README, captioned and
+credited, to point at the work being discussed — which is ordinary editorial use
+and his call to make about his own project. The line is between *identifying a
+source* and *taking its assets for the product*: nothing in `apps/` or
+`crates/` loads any of them, and the app ships with none.
 
 None of that costs the project its look. The palette is a workbench — tooled
 leather, iron-gall ink, candle-brass, verdigris — and every colour is one a dye
